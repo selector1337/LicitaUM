@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LicitaUM</title>
+    <link rel="icon" href="/static/licitaum-mark.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <section id="loginScreen" class="login-screen">
+      <form id="loginForm" class="login-card">
+        <div class="login-logo">
+          <img class="logo-full" src="/static/licitaum-logo.svg" alt="LicitaUM" />
+        </div>
+        <label>Login <input name="email" type="email" required autocomplete="username" placeholder="seu@email.com" /></label>
+        <label>Senha <input name="senha" type="password" required autocomplete="current-password" placeholder="Digite sua senha" /></label>
+        <button class="primary">Entrar</button>
+      </form>
+    </section>
+
+    <aside class="sidebar">
+      <div class="brand">
+        <strong><img class="brand-mark" src="/static/licitaum-mark.svg" alt="" /><span class="brand-text"> LicitaUM</span></strong>
+      </div>
+      <nav>
+        <button class="nav active" data-view="dashboard"><span class="nav-icon">▥</span><span class="nav-text">Painel</span></button>
+        <button class="nav" data-view="future"><span class="nav-icon">◴</span><span class="nav-text">Licitações Futuras</span></button>
+        <button class="nav" data-view="past"><span class="nav-icon">◷</span><span class="nav-text">Licitações Passadas</span></button>
+        <button class="nav" data-view="proposalItems"><span class="nav-icon">✉</span><span class="nav-text">Itens em Proposta</span></button>
+        <button class="nav" data-view="won"><span class="nav-icon">✓</span><span class="nav-text">Itens Ganhos</span></button>
+        <button class="nav" data-view="orders"><span class="nav-icon">▤</span><span class="nav-text">Encomendas</span></button>
+        <button class="nav" data-view="finished"><span class="nav-icon">◎</span><span class="nav-text">Finalizadas</span></button>
+        <button class="nav" data-view="users"><span class="nav-icon">♙</span><span class="nav-text">Usuários</span></button>
+      </nav>
+      <button id="themeToggle" class="theme-pill" title="Alternar tema"><span class="nav-icon">☾</span><span class="nav-text">Modo escuro</span></button>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div class="topbar-title">
+          <img class="brand-mark topbar-logo" src="/static/licitaum-mark.svg" alt="" />
+          <div>
+          <h1>LicitaUM</h1>
+          <p>Pregões, preços, propostas, empenhos, atas e contratos em um só lugar.</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <div class="account-menu">
+            <div class="account-avatar" id="accountAvatar">A</div>
+            <div>
+              <strong id="accountName">Administrador</strong>
+              <span id="accountEmail">admin@licitaum.local</span>
+            </div>
+            <button type="button" onclick="logout()">Sair</button>
+          </div>
+          <button id="newTender" class="primary">Nova licitação</button>
+        </div>
+      </header>
+
+      <section id="dashboard" class="view"></section>
+
+      <section id="future" class="view hidden">
+        <div class="section-head">
+          <div>
+            <h2>Licitações futuras</h2>
+            <p>Organizadas por data e horário, para acompanhar o que ainda vamos participar.</p>
+          </div>
+          <input id="futureSearch" placeholder="Filtrar por pregão, UASG ou órgão" />
+        </div>
+        <div id="futureList" class="timeline"></div>
+      </section>
+
+      <section id="past" class="view hidden">
+        <div class="section-head">
+          <div>
+            <h2>Licitações passadas</h2>
+            <p>Histórico organizado por data e horário.</p>
+          </div>
+          <div class="filter-stack">
+            <input id="pastSearch" placeholder="Pregão, UASG, órgão ou produto" />
+            <div class="grid3">
+              <input id="pastYear" placeholder="Ano" inputmode="numeric" />
+              <input id="pastMonth" placeholder="Mês" inputmode="numeric" />
+              <input id="pastDate" type="date" />
+            </div>
+          </div>
+        </div>
+        <div id="pastList" class="timeline"></div>
+      </section>
+
+      <section id="won" class="view hidden">
+        <div class="section-head">
+          <div>
+            <h2>Itens ganhos sem empenho</h2>
+            <p>Status permitidos: Aguardando Habilitação, Julgado e Habilitado, Adjudicada.</p>
+          </div>
+          <div class="filter-stack">
+            <select id="wonStatusFilter">
+              <option value="">Todos os status</option>
+              <option>Aguardando Habilitação</option>
+              <option>Julgado e Habilitado</option>
+              <option>Adjudicada</option>
+            </select>
+            <div class="view-toggle" data-target="won"><button data-mode="grid">Grid</button><button data-mode="list">Lista</button></div>
+          </div>
+        </div>
+        <div id="wonList" class="product-grid"></div>
+      </section>
+
+      <section id="proposalItems" class="view hidden">
+        <div class="section-head">
+          <div>
+            <h2>Itens em proposta</h2>
+            <p>Itens enviados em proposta e aguardando avaliação do órgão.</p>
+          </div>
+          <div class="view-toggle" data-target="proposalItems"><button data-mode="grid">Grid</button><button data-mode="list">Lista</button></div>
+        </div>
+        <div id="proposalItemsList" class="product-grid"></div>
+      </section>
+
+      <section id="orders" class="view hidden">
+        <div class="section-head">
+          <div>
+            <h2>Encomendas</h2>
+            <p>Ordenado por padrão pelo que vai vencer primeiro.</p>
+          </div>
+          <div class="filter-stack">
+            <select id="orderSort">
+              <option value="due">Vai vencer primeiro</option>
+              <option value="status">Status</option>
+              <option value="value">Maior valor</option>
+            </select>
+            <div class="view-toggle" data-target="orders"><button data-mode="grid">Grid</button><button data-mode="list">Lista</button></div>
+          </div>
+        </div>
+        <div id="ordersList" class="order-board"></div>
+      </section>
+
+      <section id="finished" class="view hidden">
+        <div class="section-head">
+          <div>
+            <h2>Finalizadas</h2>
+            <p>Itens já fornecidos ou processos encerrados, com histórico para consulta.</p>
+          </div>
+          <div class="filter-stack">
+            <select id="finishedSort">
+              <option value="recent">Mais recentes</option>
+              <option value="value">Maior valor</option>
+              <option value="pregao">Pregão</option>
+            </select>
+            <div class="view-toggle" data-target="finished"><button data-mode="grid">Grid</button><button data-mode="list">Lista</button></div>
+          </div>
+        </div>
+        <div id="finishedList" class="product-grid"></div>
+      </section>
+
+      <section id="users" class="view hidden">
+        <div class="section-head users-head">
+          <div>
+            <h2>Usuários</h2>
+            <p>Controle de acesso das pessoas que podem utilizar o LicitaUM.</p>
+          </div>
+          <button type="button" class="primary" onclick="clearUserForm()">Novo usuário</button>
+        </div>
+        <div class="users-page">
+          <form id="userForm" class="user-panel">
+            <h3>Cadastro de usuário</h3>
+            <input type="hidden" name="id" />
+            <div class="grid2">
+              <label>Nome <input name="nome" required placeholder="Nome do usuário" /></label>
+              <label>E-mail <input name="email" type="email" required placeholder="usuario@empresa.com" /></label>
+            </div>
+            <div class="grid3">
+              <label>Perfil
+                <select name="perfil">
+                  <option>Administrador</option>
+                  <option>Precificação</option>
+                  <option>Comercial</option>
+                  <option>Consulta</option>
+                </select>
+              </label>
+              <label>Senha inicial <input name="senha" type="password" placeholder="Opcional ao editar" /></label>
+              <label class="inline-check"><input name="ativo" type="checkbox" checked /> Ativo</label>
+            </div>
+            <footer>
+              <button type="button" onclick="clearUserForm()">Limpar</button>
+              <button class="primary">Salvar usuário</button>
+            </footer>
+          </form>
+          <div>
+            <div class="users-toolbar">
+              <h3>Usuários cadastrados</h3>
+              <span id="usersCount" class="tag">0 usuários</span>
+            </div>
+            <div id="usersList" class="users-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="detail" class="view hidden"></section>
+    </main>
+
+    <dialog id="tenderDialog">
+      <form method="dialog" id="tenderForm">
+        <h2>Licitação</h2>
+        <input type="hidden" name="id" />
+        <div class="grid3">
+          <label>Pregão <input name="pregão" required placeholder="90012/2025" /></label>
+          <label>UASG <input name="uasg" required placeholder="930105" /></label>
+          <label>Localidade <input name="localidade" placeholder="Jacareí-SP" /></label>
+        </div>
+        <label>Órgão <input name="órgão" required placeholder="CÂMARA MUNICIPAL..." /></label>
+        <div class="grid3">
+          <label>Data limite <input name="data_limite" type="datetime-local" /></label>
+          <label>Data da proposta <input name="data_proposta" type="date" /></label>
+          <label>Status <select name="status"></select></label>
+        </div>
+        <label>Observação <textarea name="observação"></textarea></label>
+        <footer>
+          <button type="button" data-close>Cancelar</button>
+          <button class="primary">Salvar</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="orderDialog">
+      <form method="dialog" id="orderForm">
+        <h2>Encomenda / empenho</h2>
+        <input type="hidden" name="item_id" />
+        <div class="grid3">
+          <label>Prazo para entrega <input name="prazo_entrega" type="date" /></label>
+          <label>Ordem de fornecimento <input name="ordem_fornecimento" /></label>
+          <label>Nota de empenho <input name="nota_empenho" /></label>
+        </div>
+        <label>Status <input name="status" placeholder="Pendente, Entregue..." /></label>
+        <label>Endereço de entrega <textarea name="endereço_entrega"></textarea></label>
+        <label>Observação <textarea name="observação"></textarea></label>
+        <footer>
+          <button type="button" data-close>Cancelar</button>
+          <button class="primary">Salvar</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="uploadDialog">
+      <form method="dialog" id="uploadForm">
+        <button type="button" class="dialog-close" data-close aria-label="Fechar">×</button>
+        <h2>Anexar documento</h2>
+        <input type="hidden" name="tender_id" />
+        <input type="hidden" name="item_id" />
+        <label>Tipo
+          <select name="tipo">
+            <option>Empenho</option>
+            <option>Proposta</option>
+            <option>Ata</option>
+            <option>Contrato</option>
+            <option>Outro</option>
+          </select>
+        </label>
+        <label>Arquivo <input name="file" type="file" required /></label>
+        <div id="uploadExisting" class="upload-existing"></div>
+        <footer>
+          <button type="button" data-close>Cancelar</button>
+          <button class="primary">Enviar</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="proposalLinksDialog">
+      <form method="dialog" id="proposalLinksForm">
+        <h2>Links para proposta</h2>
+        <p>Informe o link do fornecedor apenas para os itens selecionados.</p>
+        <div id="proposalLinksFields" class="proposal-link-fields"></div>
+        <footer>
+          <button type="button" data-close>Cancelar</button>
+          <button class="primary">Gerar proposta</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

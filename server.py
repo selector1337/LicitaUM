@@ -1,0 +1,957 @@
+from __future__ import annotations
+
+import json
+import hashlib
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import base64
+import mimetypes
+import uuid
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Inches, Pt
+
+
+ROOT = Path(__file__).resolve().parent
+DB_PATH = ROOT / "licitacoes.db"
+STATIC = ROOT / "static"
+OUTPUTS = ROOT / "propostas_geradas"
+UPLOADS = ROOT / "uploads"
+TEMPLATE_SOURCE = Path(r"C:\Users\selector\Downloads\Proposta Vogen Cosmetics (10).docx")
+TEMPLATE_COPY = ROOT / "modelo_proposta_vogen.docx"
+
+
+STATUS = [
+    "Em cadastro de preços",
+    "Futura licitação",
+    "Proposta enviada",
+    "Julgado e Habilitado",
+    "Aguardando Habilitação",
+    "Adjudicada",
+    "Nota de empenho emitida",
+    "Entregue",
+    "Perdido",
+]
+
+
+def connect() -> sqlite3.Connection:
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys = ON")
+    return con
+
+
+def money(value) -> Decimal:
+    if value in (None, ""):
+        return Decimal("0")
+    if isinstance(value, (int, float, Decimal)):
+        return Decimal(str(value))
+    cleaned = str(value).replace("R$", "").replace(" ", "").strip()
+    has_comma = "," in cleaned
+    has_dot = "." in cleaned
+    if has_comma:
+        cleaned = cleaned.replace(".", "").replace(",", ".")
+    elif has_dot:
+        parts = cleaned.split(".")
+        if len(parts[-1]) in (1, 2):
+            cleaned = "".join(parts[:-1]) + "." + parts[-1]
+        else:
+            cleaned = cleaned.replace(".", "")
+    try:
+        return Decimal(cleaned)
+    except InvalidOperation:
+        return Decimal("0")
+
+
+def brl(value) -> str:
+    amount = money(value).quantize(Decimal("0.01"))
+    whole, cents = f"{amount:.2f}".split(".")
+    groups = []
+    while whole:
+        groups.insert(0, whole[-3:])
+        whole = whole[:-3]
+    return f"R$ {'.'.join(groups)},{cents}"
+
+
+def parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    text = str(value).replace("Z", "")
+    try:
+        return datetime.fromisoformat(text).date()
+    except ValueError:
+        try:
+            return datetime.strptime(text, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+
+def safe_name(text: str) -> str:
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ "
+    return "".join(ch for ch in text if ch in allowed).strip().replace(" ", "_")[:90] or "proposta"
+
+
+def proposal_filename(tender: dict, items: list[dict]) -> str:
+    item_numbers = [str(item.get("item") or item.get("id")) for item in items]
+    label = "Item" if len(item_numbers) == 1 else "Itens"
+    items_text = " ".join(item_numbers)
+    return safe_name(f"Proposta {label} {items_text} Pregao {tender['pregão']} UASG {tender['uasg']}") + ".docx"
+
+
+def set_paragraph_text(paragraph, text: str) -> None:
+    runs = paragraph.runs
+    if not runs:
+        paragraph.add_run(text)
+        return
+    runs[0].text = text
+    for run in runs[1:]:
+        run.text = ""
+
+
+def set_cell_text(cell, text: str) -> None:
+    cell.text = text
+
+
+def row_to_dict(row: sqlite3.Row) -> dict:
+    return dict(row)
+
+
+def hash_password(password: str) -> str:
+    if not password:
+        return ""
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def init_db() -> None:
+    if TEMPLATE_SOURCE.exists() and not TEMPLATE_COPY.exists():
+        TEMPLATE_COPY.write_bytes(TEMPLATE_SOURCE.read_bytes())
+
+    with connect() as con:
+        con.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS tenders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pregão TEXT NOT NULL,
+                uasg TEXT NOT NULL,
+                órgão TEXT NOT NULL,
+                localidade TEXT,
+                data_limite TEXT,
+                data_proposta TEXT,
+                status TEXT NOT NULL DEFAULT 'Em cadastro de preços',
+                modalidade TEXT NOT NULL DEFAULT 'Pregão Eletrônico',
+                observação TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
+                item TEXT,
+                marca TEXT,
+                modelo TEXT,
+                referência TEXT,
+                qtd INTEGER NOT NULL DEFAULT 1,
+                valor_unitário REAL NOT NULL DEFAULT 0,
+                link_usa TEXT,
+                link_br TEXT,
+                link_referência TEXT,
+                valor_cadastro REAL,
+                valor_mínimo REAL,
+                responsável_preço TEXT,
+                status TEXT NOT NULL DEFAULT 'Em cadastro de preços',
+                observação TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                prazo_entrega TEXT,
+                ordem_fornecimento TEXT,
+                endereço_entrega TEXT,
+                nota_empenho TEXT,
+                status TEXT NOT NULL DEFAULT 'Pendente',
+                observação TEXT
+            );
+            """
+        )
+        count = con.execute("SELECT COUNT(*) FROM tenders").fetchone()[0]
+        if count:
+            return
+
+        samples = [
+            (
+                "90040/2026",
+                "000000",
+                "ÓRGÃO A DEFINIR",
+                "",
+                "2026-07-15T09:00",
+                "Futura licitação",
+                [
+                    ("", "", "", "Itens ainda em análise", 1, 0, "", "", "", None, None, ""),
+                ],
+            ),
+            (
+                "90012/2025",
+                "930105",
+                "CÂMARA MUNICIPAL DE JACAREÍ - SP",
+                "Jacareí-SP",
+                "2025-03-04T09:00",
+                "Em cadastro de preços",
+                [
+                    ("6", "Hollyland", "Lark M2 Combo", "Hollyland Lark M2 Combo", 6, 1237.80, "bhphotovideo", "Mercado Livre", "", 2000, 800, ""),
+                    ("7", "AKG", "K414P", "AKG K414P", 10, 283.30, "", "Mercado Livre", "", 400, 380, ""),
+                    ("10", "Sony", "BP-U70", "Sony BP-U70", 4, 3750.40, "bhphotovideo", "", "", 4200, 3500, ""),
+                    ("25", "Hollyland", "Solidcom C1 Pro Hub 8S", "Hollyland Solidcom C1 Pro Hub 8S", 1, 47666.97, "", "", "", 50000, 47000, ""),
+                ],
+            ),
+            (
+                "90028/2025",
+                "158517",
+                "UNIVERSIDADE FEDERAL DA FRONTEIRA SUL",
+                "",
+                "",
+                "Aguardando Habilitação",
+                [
+                    ("44", "Pioneer", "RMX-1000", "Pioneer RMX-1000", 1, 11499, "", "", "https://www.pioneerdj.com/", None, None, ""),
+                ],
+            ),
+            (
+                "90036/2025",
+                "158410",
+                "INST. FED. DE EDUC. TEC. BAHIA/CAMPUS EUNÁPOLIS",
+                "Eunápolis-BA",
+                "",
+                "Nota de empenho emitida",
+                [
+                    ("42", "Yamaha", "TF5", "Yamaha TF5", 1, 25969, "", "", "Yamaha", None, None, "99"),
+                    ("43", "Epson", "PowerLite E20", "Epson PowerLite E20", 8, 3299, "", "", "Epson", None, None, "129"),
+                ],
+            ),
+        ]
+        for pregão, uasg, órgão, localidade, data_limite, status, items in samples:
+            cur = con.execute(
+                "INSERT INTO tenders (pregão, uasg, órgão, localidade, data_limite, status) VALUES (?, ?, ?, ?, ?, ?)",
+                (pregão, uasg, órgão, localidade, data_limite, status),
+            )
+            tender_id = cur.lastrowid
+            for item in items:
+                cur_item = con.execute(
+                    """
+                    INSERT INTO items (
+                        tender_id, item, marca, modelo, referência, qtd, valor_unitário,
+                        link_usa, link_br, link_referência, valor_cadastro, valor_mínimo,
+                        observação
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (tender_id, *item),
+                )
+                if status == "Nota de empenho emitida":
+                    con.execute(
+                        """
+                        INSERT INTO orders (item_id, prazo_entrega, ordem_fornecimento, endereço_entrega, status)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            cur_item.lastrowid,
+                            "2026-01-29" if item[0] == "42" else "2026-01-30",
+                            item[-1],
+                            "Avenida David Jonas Fadini BR 101, Rosa Neto, Eunápolis - BA. CEP 45823-221",
+                            "Pendente",
+                        ),
+                    )
+
+
+def ensure_schema() -> None:
+    with connect() as con:
+        tender_cols = {row["name"] for row in con.execute("PRAGMA table_info(tenders)")}
+        if "data_proposta" not in tender_cols:
+            con.execute("ALTER TABLE tenders ADD COLUMN data_proposta TEXT")
+        item_cols = {row["name"] for row in con.execute("PRAGMA table_info(items)")}
+        if "valor_ganho" not in item_cols:
+            con.execute("ALTER TABLE items ADD COLUMN valor_ganho REAL")
+        if "valor_sigiloso" not in item_cols:
+            con.execute("ALTER TABLE items ADD COLUMN valor_sigiloso INTEGER NOT NULL DEFAULT 0")
+        if "lote" not in item_cols:
+            con.execute("ALTER TABLE items ADD COLUMN lote TEXT")
+        if "opção_produto" not in item_cols:
+            con.execute("ALTER TABLE items ADD COLUMN opção_produto TEXT")
+        if "selecionado_cadastro" not in item_cols:
+            con.execute("ALTER TABLE items ADD COLUMN selecionado_cadastro INTEGER NOT NULL DEFAULT 1")
+        order_cols = {row["name"] for row in con.execute("PRAGMA table_info(orders)")}
+        if "pagamento_recebido" not in order_cols:
+            con.execute("ALTER TABLE orders ADD COLUMN pagamento_recebido INTEGER NOT NULL DEFAULT 0")
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tender_id INTEGER REFERENCES tenders(id) ON DELETE CASCADE,
+                item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+                tipo TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                stored_name TEXT NOT NULL,
+                content_type TEXT,
+                uploaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                perfil TEXT NOT NULL DEFAULT 'Usuário',
+                senha_hash TEXT,
+                ativo INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        users = con.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        if not users:
+            con.execute(
+                "INSERT INTO users (nome, email, perfil, senha_hash) VALUES (?, ?, ?, ?)",
+                ("Administrador", "admin@licitaum.local", "Administrador", hash_password("admin")),
+            )
+        future = con.execute("SELECT COUNT(*) FROM tenders WHERE status = 'Futura licitação'").fetchone()[0]
+        if not future:
+            con.execute(
+                """
+                INSERT INTO tenders (pregão, uasg, órgão, localidade, data_limite, status, observação)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "90040/2026",
+                    "000000",
+                    "ÓRGÃO A DEFINIR",
+                    "",
+                    "2026-07-15T09:00",
+                    "Futura licitação",
+                    "Exemplo para acompanhamento de licitações futuras.",
+                ),
+            )
+
+
+def all_tenders(query: str = "", status: str = "") -> list[dict]:
+    with connect() as con:
+        sql = """
+            SELECT t.*,
+                   COUNT(i.id) AS itens,
+                   COALESCE(SUM(CASE WHEN COALESCE(i.selecionado_cadastro, 1) = 1 THEN 1 ELSE 0 END), 0) AS itens_ativos,
+                   COALESCE(SUM(
+                       CASE
+                           WHEN COALESCE(i.selecionado_cadastro, 1) = 0 THEN 0
+                           WHEN COALESCE(i.valor_cadastro, 0) <= 0 THEN 0
+                           WHEN COALESCE(i.valor_mínimo, 0) <= 0 THEN 0
+                           WHEN COALESCE(i.valor_sigiloso, 0) = 1 THEN 1
+                           WHEN COALESCE(i.valor_unitário, 0) > 0 THEN 1
+                           ELSE 0
+                       END
+                   ), 0) AS itens_precificados,
+                   COALESCE(SUM(
+                       CASE
+                           WHEN COALESCE(i.selecionado_cadastro, 1) = 0 THEN 0
+                           WHEN COALESCE(i.valor_sigiloso, 0) = 1 THEN 0
+                           WHEN COALESCE(i.valor_ganho, 0) > 0 THEN i.qtd * i.valor_ganho
+                           ELSE i.qtd * i.valor_unitário
+                       END
+                   ), 0) AS valor_total
+            FROM tenders t
+            LEFT JOIN items i ON i.tender_id = t.id
+        """
+        where, args = [], []
+        if query:
+            where.append("(t.pregão LIKE ? OR t.uasg LIKE ? OR t.órgão LIKE ?)")
+            like = f"%{query}%"
+            args.extend([like, like, like])
+        if status:
+            where.append("t.status = ?")
+            args.append(status)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " GROUP BY t.id ORDER BY t.created_at DESC, t.id DESC"
+        return [row_to_dict(row) for row in con.execute(sql, args)]
+
+
+def effective_unit_value(item: dict) -> Decimal:
+    valor_ganho = money(item.get("valor_ganho"))
+    return valor_ganho if valor_ganho > 0 else money(item.get("valor_unitário"))
+
+
+def attachments_for(tender_id: int | None = None, item_id: int | None = None) -> list[dict]:
+    with connect() as con:
+        where, args = [], []
+        if tender_id:
+            where.append("tender_id = ?")
+            args.append(tender_id)
+        if item_id:
+            where.append("item_id = ?")
+            args.append(item_id)
+        sql = "SELECT * FROM attachments"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY uploaded_at DESC, id DESC"
+        return [row_to_dict(row) for row in con.execute(sql, args)]
+
+
+def tender_detail(tender_id: int) -> dict:
+    with connect() as con:
+        tender = con.execute("SELECT * FROM tenders WHERE id = ?", (tender_id,)).fetchone()
+        if not tender:
+            raise KeyError("Licitação não encontrada")
+        items = con.execute(
+            """
+            SELECT i.*, o.id AS order_id, o.prazo_entrega, o.ordem_fornecimento,
+                   o.endereço_entrega, o.nota_empenho, o.status AS status_encomenda,
+                   o.pagamento_recebido, o.observação AS observação_encomenda
+            FROM items i
+            LEFT JOIN orders o ON o.item_id = i.id
+            WHERE i.tender_id = ?
+            ORDER BY CAST(i.item AS INTEGER), i.id
+            """,
+            (tender_id,),
+        ).fetchall()
+        data = row_to_dict(tender)
+        data["items"] = [row_to_dict(row) for row in items]
+        data["attachments"] = attachments_for(tender_id=tender_id)
+        data["valor_total"] = sum(
+            money(row["qtd"]) * effective_unit_value(row)
+            for row in data["items"]
+            if int(row.get("selecionado_cadastro") if row.get("selecionado_cadastro") is not None else 1)
+            and not int(row.get("valor_sigiloso") or 0)
+        )
+        return data
+
+
+def read_body(handler: BaseHTTPRequestHandler) -> dict:
+    length = int(handler.headers.get("Content-Length", "0"))
+    if not length:
+        return {}
+    raw = handler.rfile.read(length).decode("utf-8")
+    return json.loads(raw or "{}")
+
+
+def save_tender(data: dict) -> int:
+    fields = ["pregão", "uasg", "órgão", "localidade", "data_limite", "data_proposta", "status", "modalidade", "observação"]
+    values = {key: data.get(key, "") for key in fields}
+    values["status"] = values["status"] or "Em cadastro de preços"
+    values["modalidade"] = values["modalidade"] or "Pregão Eletrônico"
+    with connect() as con:
+        if data.get("id"):
+            sets = ", ".join(f"{field} = ?" for field in fields)
+            con.execute(f"UPDATE tenders SET {sets} WHERE id = ?", [values[field] for field in fields] + [data["id"]])
+            return int(data["id"])
+        cur = con.execute(
+            f"INSERT INTO tenders ({', '.join(fields)}) VALUES ({', '.join('?' for _ in fields)})",
+            [values[field] for field in fields],
+        )
+        return int(cur.lastrowid)
+
+
+def list_users() -> list[dict]:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT id, nome, email, perfil, ativo, created_at FROM users ORDER BY ativo DESC, nome"
+        ).fetchall()
+        return [row_to_dict(row) for row in rows]
+
+
+def save_user(data: dict) -> int:
+    nome = (data.get("nome") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    perfil = (data.get("perfil") or "Usuário").strip()
+    senha = data.get("senha") or ""
+    if not nome or not email:
+        raise ValueError("Nome e e-mail são obrigatórios")
+    fields = ["nome", "email", "perfil", "ativo"]
+    values = {
+        "nome": nome,
+        "email": email,
+        "perfil": perfil,
+        "ativo": 1 if str(data.get("ativo", "1")).lower() in ("1", "true", "on", "sim") else 0,
+    }
+    with connect() as con:
+        if data.get("id"):
+            sets = [f"{field} = ?" for field in fields]
+            args = [values[field] for field in fields]
+            if senha:
+                sets.append("senha_hash = ?")
+                args.append(hash_password(senha))
+            con.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", args + [data["id"]])
+            return int(data["id"])
+        cur = con.execute(
+            "INSERT INTO users (nome, email, perfil, ativo, senha_hash) VALUES (?, ?, ?, ?, ?)",
+            [values["nome"], values["email"], values["perfil"], values["ativo"], hash_password(senha)],
+        )
+        return int(cur.lastrowid)
+
+
+def authenticate_user(data: dict) -> dict:
+    email = (data.get("email") or "").strip().lower()
+    senha = data.get("senha") or ""
+    if not email or not senha:
+      raise ValueError("Informe login e senha")
+    with connect() as con:
+        row = con.execute(
+            "SELECT id, nome, email, perfil, ativo, senha_hash FROM users WHERE email = ?",
+            (email,),
+        ).fetchone()
+    if not row or not int(row["ativo"] or 0) or row["senha_hash"] != hash_password(senha):
+        raise PermissionError("Login ou senha inválidos")
+    user = row_to_dict(row)
+    user.pop("senha_hash", None)
+    return user
+
+
+def save_item(data: dict) -> int:
+    fields = [
+        "tender_id",
+        "item",
+        "marca",
+        "modelo",
+        "referência",
+        "qtd",
+        "valor_unitário",
+        "link_usa",
+        "link_br",
+        "link_referência",
+        "valor_cadastro",
+        "valor_mínimo",
+        "valor_ganho",
+        "valor_sigiloso",
+        "lote",
+        "opção_produto",
+        "selecionado_cadastro",
+        "responsável_preço",
+        "status",
+        "observação",
+    ]
+    values = {key: data.get(key, "") for key in fields}
+    for key in ("qtd", "valor_unitário", "valor_cadastro", "valor_mínimo", "valor_ganho"):
+        values[key] = float(money(values[key]))
+    values["valor_sigiloso"] = 1 if str(values["valor_sigiloso"]).lower() in ("1", "true", "on", "sim") else 0
+    values["selecionado_cadastro"] = 1 if str(values["selecionado_cadastro"]).lower() in ("1", "true", "on", "sim", "") else 0
+    values["status"] = values["status"] or "Em cadastro de preços"
+    with connect() as con:
+        if data.get("id"):
+            sets = ", ".join(f"{field} = ?" for field in fields)
+            con.execute(f"UPDATE items SET {sets} WHERE id = ?", [values[field] for field in fields] + [data["id"]])
+            return int(data["id"])
+        cur = con.execute(
+            f"INSERT INTO items ({', '.join(fields)}) VALUES ({', '.join('?' for _ in fields)})",
+            [values[field] for field in fields],
+        )
+        return int(cur.lastrowid)
+
+
+def save_order(data: dict) -> int:
+    fields = ["item_id", "prazo_entrega", "ordem_fornecimento", "endereço_entrega", "nota_empenho", "status", "pagamento_recebido", "observação"]
+    values = {key: data.get(key, "") for key in fields}
+    values["status"] = values["status"] or "Pendente"
+    values["pagamento_recebido"] = 1 if str(values["pagamento_recebido"]).lower() in ("1", "true", "on", "sim") else 0
+    with connect() as con:
+        existing = con.execute("SELECT id FROM orders WHERE item_id = ?", (values["item_id"],)).fetchone()
+        if existing:
+            sets = ", ".join(f"{field} = ?" for field in fields)
+            con.execute(f"UPDATE orders SET {sets} WHERE id = ?", [values[field] for field in fields] + [existing["id"]])
+            return int(existing["id"])
+        cur = con.execute(
+            f"INSERT INTO orders ({', '.join(fields)}) VALUES ({', '.join('?' for _ in fields)})",
+            [values[field] for field in fields],
+        )
+        return int(cur.lastrowid)
+
+
+def bulk_update_items(data: dict) -> int:
+    item_ids = [int(item_id) for item_id in data.get("item_ids", [])]
+    if not item_ids:
+        return 0
+    sets, args = [], []
+    if data.get("status"):
+        sets.append("status = ?")
+        args.append(data["status"])
+    if data.get("valor_ganho") not in (None, ""):
+        sets.append("valor_ganho = ?")
+        args.append(float(money(data["valor_ganho"])))
+    if not sets:
+        return 0
+    placeholders = ", ".join("?" for _ in item_ids)
+    with connect() as con:
+        con.execute(f"UPDATE items SET {', '.join(sets)} WHERE id IN ({placeholders})", args + item_ids)
+    return len(item_ids)
+
+
+def save_attachment(data: dict) -> int:
+    UPLOADS.mkdir(exist_ok=True)
+    filename = Path(data.get("filename") or "arquivo").name
+    content_type = data.get("content_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    raw_data = data.get("data", "")
+    if "," in raw_data:
+        raw_data = raw_data.split(",", 1)[1]
+    content = base64.b64decode(raw_data)
+    stored_name = f"{uuid.uuid4().hex}_{safe_name(filename)}"
+    (UPLOADS / stored_name).write_bytes(content)
+    with connect() as con:
+        cur = con.execute(
+            """
+            INSERT INTO attachments (tender_id, item_id, tipo, filename, stored_name, content_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data.get("tender_id") or None,
+                data.get("item_id") or None,
+                data.get("tipo") or "Documento",
+                filename,
+                stored_name,
+                content_type,
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def save_file_attachment(tender_id: int, file_path: Path, tipo: str) -> int:
+    UPLOADS.mkdir(exist_ok=True)
+    filename = file_path.name
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    stored_name = f"{uuid.uuid4().hex}_{safe_name(filename)}"
+    (UPLOADS / stored_name).write_bytes(file_path.read_bytes())
+    with connect() as con:
+        existing = con.execute(
+            "SELECT id, stored_name FROM attachments WHERE tender_id = ? AND item_id IS NULL AND tipo = ? AND filename = ?",
+            (tender_id, tipo, filename),
+        ).fetchall()
+        for row in existing:
+            (UPLOADS / row["stored_name"]).unlink(missing_ok=True)
+            con.execute("DELETE FROM attachments WHERE id = ?", (row["id"],))
+        cur = con.execute(
+            """
+            INSERT INTO attachments (tender_id, item_id, tipo, filename, stored_name, content_type)
+            VALUES (?, NULL, ?, ?, ?, ?)
+            """,
+            (tender_id, tipo, filename, stored_name, content_type),
+        )
+        return int(cur.lastrowid)
+
+
+def get_attachment(attachment_id: int) -> dict:
+    with connect() as con:
+        row = con.execute("SELECT * FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+        if not row:
+            raise KeyError("Anexo não encontrado")
+        return row_to_dict(row)
+
+
+def number_words(value: Decimal) -> str:
+    value = money(value).quantize(Decimal("0.01"))
+    inteiro = int(value)
+    centavos = int((value - inteiro) * 100)
+
+    unidades = ["", "um", "dois", "três", "quatro", "cinco", "seis", "sete", "oito", "nove"]
+    especiais = {
+        10: "dez", 11: "onze", 12: "doze", 13: "treze", 14: "quatorze", 15: "quinze",
+        16: "dezesseis", 17: "dezessete", 18: "dezoito", 19: "dezenove",
+    }
+    dezenas = ["", "", "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa"]
+    centenas = ["", "cento", "duzentos", "trezentos", "quatrocentos", "quinhentos", "seiscentos", "setecentos", "oitocentos", "novecentos"]
+
+    def below_thousand(n: int) -> str:
+        if n == 0:
+            return ""
+        if n == 100:
+            return "cem"
+        parts = []
+        c, rest = divmod(n, 100)
+        if c:
+            parts.append(centenas[c])
+        if rest:
+            if rest < 10:
+                parts.append(unidades[rest])
+            elif rest < 20:
+                parts.append(especiais[rest])
+            else:
+                d, u = divmod(rest, 10)
+                parts.append(dezenas[d] + (f" e {unidades[u]}" if u else ""))
+        return " e ".join(parts)
+
+    def integer_words(n: int) -> str:
+        if n == 0:
+            return "zero"
+        groups = []
+        milhões, resto = divmod(n, 1_000_000)
+        milhares, centenas_resto = divmod(resto, 1_000)
+        if milhões:
+            groups.append("um milhão" if milhões == 1 else f"{below_thousand(milhões)} milhões")
+        if milhares:
+            groups.append("mil" if milhares == 1 else f"{below_thousand(milhares)} mil")
+        if centenas_resto:
+            groups.append(below_thousand(centenas_resto))
+        return ", ".join(groups[:-1]) + (" e " if len(groups) > 1 else "") + groups[-1]
+
+    texto = integer_words(inteiro) + (" real" if inteiro == 1 else " reais")
+    if centavos:
+        texto += " e " + integer_words(centavos) + (" centavo" if centavos == 1 else " centavos")
+    return texto
+
+
+def selected_items(tender: dict, item_ids: list[int] | None) -> list[dict]:
+    if not item_ids:
+        return tender["items"]
+    wanted = {int(item_id) for item_id in item_ids}
+    return [item for item in tender["items"] if int(item["id"]) in wanted]
+
+
+def proposal_link(item: dict) -> str:
+    return str(item.get("link_referência") or item.get("link_br") or item.get("link_usa") or "").strip()
+
+
+def generate_proposal(tender_id: int, item_ids: list[int] | None = None) -> Path:
+    tender = tender_detail(tender_id)
+    items = selected_items(tender, item_ids)
+    if not items:
+        raise ValueError("Selecione pelo menos um item para gerar a proposta.")
+    missing_links = [str(item.get("item") or item.get("modelo") or item["id"]) for item in items if not proposal_link(item)]
+    if missing_links:
+        raise ValueError("Informe o link do fornecedor antes de gerar a proposta. Itens sem link: " + ", ".join(missing_links))
+    OUTPUTS.mkdir(exist_ok=True)
+    if not TEMPLATE_COPY.exists():
+        raise FileNotFoundError("Modelo de proposta não encontrado.")
+
+    doc = Document(TEMPLATE_COPY)
+    set_paragraph_text(
+        doc.paragraphs[1],
+        f"Ao Órgão UASG {tender['uasg']} - {tender['órgão']}. Apresentamos nossa proposta de preços.",
+    )
+
+    table = doc.tables[0]
+    while len(table.rows) > 2:
+        table._tbl.remove(table.rows[-1]._tr)
+    if len(table.rows) < 2:
+        table.add_row()
+    total = Decimal("0")
+    for idx, item in enumerate(items):
+        row = table.rows[1].cells if idx == 0 else table.add_row().cells
+        total_item = money(item["qtd"]) * effective_unit_value(item)
+        total += total_item
+        set_cell_text(row[0], str(item.get("item") or ""))
+        set_cell_text(row[1], str(item.get("marca") or ""))
+        set_cell_text(row[2], str(item.get("modelo") or item.get("referência") or ""))
+        set_cell_text(row[3], proposal_link(item))
+        set_cell_text(row[4], str(item.get("qtd") or ""))
+        set_cell_text(row[5], brl(effective_unit_value(item)))
+        set_cell_text(row[6], brl(total_item))
+
+    for paragraph in doc.paragraphs:
+        text = paragraph.text
+        if "Valor total da proposta:" in text:
+            set_paragraph_text(paragraph, re.sub(r"Valor total da proposta:.*", f"Valor total da proposta: {brl(total)}", text))
+        elif "O valor total dessa proposta é de" in text:
+            set_paragraph_text(paragraph, f"O valor total dessa proposta é de {brl(total)} ({number_words(total)}).")
+
+    when = tender.get("data_proposta") or date.today().isoformat()
+    try:
+        when_date = datetime.fromisoformat(when).date()
+    except ValueError:
+        when_date = date.today()
+    months = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+    date_line = f"Muqui/ES, {when_date.day} de {months[when_date.month - 1].capitalize()} de {when_date.year}"
+    for paragraph in doc.paragraphs:
+        if paragraph.text.startswith("Muqui/ES,"):
+            set_paragraph_text(paragraph, date_line)
+            break
+
+    filename = proposal_filename(tender, items)
+    out = OUTPUTS / filename
+    doc.save(out)
+    return out
+
+
+def find_soffice() -> str | None:
+    for candidate in (
+        shutil.which("soffice"),
+        shutil.which("libreoffice"),
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    ):
+        if candidate and Path(candidate).exists():
+            return str(candidate)
+    return None
+
+
+def convert_docx_to_pdf(docx_path: Path) -> Path:
+    pdf_path = docx_path.with_suffix(".pdf")
+    soffice = find_soffice()
+    if soffice:
+        subprocess.run(
+            [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(docx_path.parent), str(docx_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if pdf_path.exists():
+            return pdf_path
+
+    winword_exists = any(
+        Path(candidate).exists()
+        for candidate in (
+            r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE",
+            r"C:\Program Files (x86)\Microsoft Office\root\Office16\WINWORD.EXE",
+        )
+    )
+    if not winword_exists:
+        raise RuntimeError("Não foi possível converter para PDF. Instale LibreOffice ou Microsoft Word neste computador para habilitar a conversão automática.")
+
+    ps = f"""
+    $word = New-Object -ComObject Word.Application
+    $word.Visible = $false
+    $word.DisplayAlerts = 0
+    $doc = $word.Documents.Open('{str(docx_path).replace("'", "''")}', $false, $true)
+    $doc.ExportAsFixedFormat('{str(pdf_path).replace("'", "''")}', 17)
+    $doc.Close(0)
+    $word.Quit()
+    """
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True, capture_output=True, text=True, timeout=20)
+    except Exception as exc:
+        raise RuntimeError("Não foi possível converter para PDF. Instale LibreOffice ou Microsoft Word neste computador para habilitar a conversão automática.") from exc
+    if not pdf_path.exists():
+        raise RuntimeError("A conversão para PDF não retornou um arquivo.")
+    return pdf_path
+
+
+class App(BaseHTTPRequestHandler):
+    def send_json(self, data, code: int = 200) -> None:
+        payload = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def send_file(self, path: Path, content_type: str = "application/octet-stream", download_name: str | None = None) -> None:
+        payload = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        if download_name:
+            self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_GET(self) -> None:
+        try:
+            parsed = urlparse(self.path)
+            path = parsed.path
+            qs = parse_qs(parsed.query)
+            if path == "/":
+                return self.send_file(STATIC / "index.html", "text/html; charset=utf-8")
+            if path.startswith("/static/"):
+                file_path = STATIC / path.removeprefix("/static/")
+                types = {
+                    ".css": "text/css; charset=utf-8",
+                    ".js": "application/javascript; charset=utf-8",
+                    ".svg": "image/svg+xml",
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".webp": "image/webp",
+                }
+                return self.send_file(file_path, types.get(file_path.suffix, "application/octet-stream"))
+            if path == "/api/meta":
+                return self.send_json({"status": STATUS, "current_date": date.today().isoformat()})
+            if path == "/api/users":
+                return self.send_json(list_users())
+            if path == "/api/attachments":
+                tender_id = int(qs.get("tender_id", ["0"])[0] or 0)
+                item_id = int(qs.get("item_id", ["0"])[0] or 0)
+                return self.send_json(attachments_for(tender_id or None, item_id or None))
+            if path == "/api/tenders":
+                return self.send_json(all_tenders(qs.get("q", [""])[0], qs.get("status", [""])[0]))
+            if path.startswith("/api/tenders/"):
+                tender_id = int(path.split("/")[-1])
+                return self.send_json(tender_detail(tender_id))
+            if path.startswith("/attachments/"):
+                attachment_id = int(path.strip("/").split("/")[1])
+                attachment = get_attachment(attachment_id)
+                return self.send_file(UPLOADS / attachment["stored_name"], attachment.get("content_type") or "application/octet-stream", attachment["filename"])
+            if path.startswith("/proposal/"):
+                tender_id = int(path.split("/")[-1])
+                item_ids = [int(item_id) for item_id in qs.get("items", [""])[0].split(",") if item_id]
+                out = generate_proposal(tender_id, item_ids)
+                if qs.get("format", ["docx"])[0].lower() == "pdf":
+                    pdf = convert_docx_to_pdf(out)
+                    save_file_attachment(tender_id, pdf, "Proposta")
+                    return self.send_file(pdf, "application/pdf", pdf.name)
+                save_file_attachment(tender_id, out, "Proposta")
+                return self.send_file(out, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", out.name)
+            self.send_error(404)
+        except Exception as exc:
+            self.send_json({"error": str(exc)}, 500)
+
+    def do_POST(self) -> None:
+        try:
+            path = urlparse(self.path).path
+            data = read_body(self)
+            if path == "/api/login":
+                return self.send_json(authenticate_user(data))
+            if path == "/api/tenders":
+                return self.send_json({"id": save_tender(data)})
+            if path == "/api/users":
+                return self.send_json({"id": save_user(data)})
+            if path == "/api/items":
+                return self.send_json({"id": save_item(data)})
+            if path == "/api/orders":
+                return self.send_json({"id": save_order(data)})
+            if path == "/api/items/bulk":
+                return self.send_json({"updated": bulk_update_items(data)})
+            if path == "/api/attachments":
+                return self.send_json({"id": save_attachment(data)})
+            self.send_error(404)
+        except Exception as exc:
+            self.send_json({"error": str(exc)}, 500)
+
+    def do_DELETE(self) -> None:
+        try:
+            path = urlparse(self.path).path
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "api":
+                table = {"tenders": "tenders", "items": "items", "orders": "orders", "attachments": "attachments", "users": "users"}.get(parts[1])
+                if table:
+                    with connect() as con:
+                        if table == "attachments":
+                            row = con.execute("SELECT stored_name FROM attachments WHERE id = ?", (int(parts[2]),)).fetchone()
+                            if row:
+                                (UPLOADS / row["stored_name"]).unlink(missing_ok=True)
+                        if table == "tenders":
+                            rows = con.execute("SELECT stored_name FROM attachments WHERE tender_id = ?", (int(parts[2]),)).fetchall()
+                            for row in rows:
+                                (UPLOADS / row["stored_name"]).unlink(missing_ok=True)
+                        if table == "items":
+                            rows = con.execute("SELECT stored_name FROM attachments WHERE item_id = ?", (int(parts[2]),)).fetchall()
+                            for row in rows:
+                                (UPLOADS / row["stored_name"]).unlink(missing_ok=True)
+                        con.execute(f"DELETE FROM {table} WHERE id = ?", (int(parts[2]),))
+                    return self.send_json({"ok": True})
+            self.send_error(404)
+        except Exception as exc:
+            self.send_json({"error": str(exc)}, 500)
+
+
+if __name__ == "__main__":
+    init_db()
+    ensure_schema()
+    host = os.environ.get("LICITAUM_HOST", "127.0.0.1")
+    port = int(os.environ.get("LICITAUM_PORT", "8765"))
+    server = ThreadingHTTPServer((host, port), App)
+    print(f"LicitaUM aberto em http://{host}:{port}")
+    server.serve_forever()

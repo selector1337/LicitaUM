@@ -1,0 +1,11 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title">
+  <title id="title">LicitaUM</title>
+  <rect width="128" height="128" rx="30" fill="white"/>
+  <path d="M31 24V94C31 101.18 36.82 107 44 107H95" stroke="#0757A8" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M45 24H79L101 46V77" stroke="#24303B" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M79 25V46H100" stroke="#24303B" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M50 60H75" stroke="#24303B" stroke-width="8" stroke-linecap="round"/>
+  <path d="M50 75H84" stroke="#24303B" stroke-width="8" stroke-linecap="round"/>
+  <path d="M50 90H76" stroke="#24303B" stroke-width="8" stroke-linecap="round"/>
+  <path d="M73 88L87 102L111 72" stroke="#D99A1B" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
