@@ -1,0 +1,42 @@
+# Banco local
+licitacoes.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Arquivos gerados pelo sistema
+uploads/
+propostas_geradas/
+
+# Propostas/testes gerados localmente
+proposta*.docx
+proposta*.pdf
+*_teste.docx
+*_teste.pdf
+*.bin
+headers*.txt
+multi_headers.txt
+one_headers.txt
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Sistema/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Variáveis locais
+.env
+.env.*
