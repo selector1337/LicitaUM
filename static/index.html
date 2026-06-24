@@ -180,7 +180,7 @@
                   <option>Consulta</option>
                 </select>
               </label>
-              <label>Senha inicial <input name="senha" type="password" placeholder="Opcional ao editar" /></label>
+              <label>Senha inicial <input name="senha" type="password" required placeholder="Obrigatória para novo usuário" /></label>
               <label class="inline-check"><input name="ativo" type="checkbox" checked /> Ativo</label>
             </div>
             <footer>
@@ -253,6 +253,7 @@
           <select name="tipo">
             <option>Empenho</option>
             <option>Proposta</option>
+            <option>Edital</option>
             <option>Ata</option>
             <option>Contrato</option>
             <option>Outro</option>
@@ -275,6 +276,21 @@
         <footer>
           <button type="button" data-close>Cancelar</button>
           <button class="primary">Gerar proposta</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="observationDialog">
+      <form method="dialog" id="observationForm" class="observation-form">
+        <button type="button" class="dialog-close" data-close aria-label="Fechar">×</button>
+        <h2>Observação do produto</h2>
+        <p id="observationItemLabel" class="dialog-subtitle"></p>
+        <label>Observação
+          <textarea id="observationText" placeholder="Registre informações importantes para quem está precificando ou acompanhando este item."></textarea>
+        </label>
+        <footer>
+          <button type="button" data-close>Cancelar</button>
+          <button class="primary">Salvar observação</button>
         </footer>
       </form>
     </dialog>

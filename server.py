@@ -323,23 +323,6 @@ def ensure_schema() -> None:
                 "INSERT INTO users (nome, email, perfil, senha_hash) VALUES (?, ?, ?, ?)",
                 ("Administrador", "admin@licitaum.local", "Administrador", hash_password("admin")),
             )
-        future = con.execute("SELECT COUNT(*) FROM tenders WHERE status = 'Futura licitação'").fetchone()[0]
-        if not future:
-            con.execute(
-                """
-                INSERT INTO tenders (pregão, uasg, órgão, localidade, data_limite, status, observação)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "90040/2026",
-                    "000000",
-                    "ÓRGÃO A DEFINIR",
-                    "",
-                    "2026-07-15T09:00",
-                    "Futura licitação",
-                    "Exemplo para acompanhamento de licitações futuras.",
-                ),
-            )
 
 
 def all_tenders(query: str = "", status: str = "") -> list[dict]:
@@ -473,6 +456,8 @@ def save_user(data: dict) -> int:
     senha = data.get("senha") or ""
     if not nome or not email:
         raise ValueError("Nome e e-mail são obrigatórios")
+    if not data.get("id") and not senha:
+        raise ValueError("Senha inicial é obrigatória para novos usuários")
     fields = ["nome", "email", "perfil", "ativo"]
     values = {
         "nome": nome,
@@ -481,6 +466,12 @@ def save_user(data: dict) -> int:
         "ativo": 1 if str(data.get("ativo", "1")).lower() in ("1", "true", "on", "sim") else 0,
     }
     with connect() as con:
+        existing = con.execute(
+            "SELECT id FROM users WHERE email = ? AND id != ?",
+            (email, int(data.get("id") or 0)),
+        ).fetchone()
+        if existing:
+            raise ValueError("Já existe um usuário cadastrado com este e-mail")
         if data.get("id"):
             sets = [f"{field} = ?" for field in fields]
             args = [values[field] for field in fields]
@@ -838,10 +829,12 @@ class App(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def send_file(self, path: Path, content_type: str = "application/octet-stream", download_name: str | None = None) -> None:
+    def send_file(self, path: Path, content_type: str = "application/octet-stream", download_name: str | None = None, cache_control: str | None = None) -> None:
         payload = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        if cache_control:
+            self.send_header("Cache-Control", cache_control)
         if download_name:
             self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
         self.send_header("Content-Length", str(len(payload)))
@@ -854,7 +847,7 @@ class App(BaseHTTPRequestHandler):
             path = parsed.path
             qs = parse_qs(parsed.query)
             if path == "/":
-                return self.send_file(STATIC / "index.html", "text/html; charset=utf-8")
+                return self.send_file(STATIC / "index.html", "text/html; charset=utf-8", cache_control="no-store")
             if path.startswith("/static/"):
                 file_path = STATIC / path.removeprefix("/static/")
                 types = {
@@ -866,7 +859,7 @@ class App(BaseHTTPRequestHandler):
                     ".jpeg": "image/jpeg",
                     ".webp": "image/webp",
                 }
-                return self.send_file(file_path, types.get(file_path.suffix, "application/octet-stream"))
+                return self.send_file(file_path, types.get(file_path.suffix, "application/octet-stream"), cache_control="no-store")
             if path == "/api/meta":
                 return self.send_json({"status": STATUS, "current_date": date.today().isoformat()})
             if path == "/api/users":

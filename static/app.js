@@ -6,13 +6,15 @@ const state = {
   editItemId: null,
   editWonId: null,
   pendingProposalFormat: "docx",
-  viewModes: { won: "grid", proposalItems: "grid", orders: "grid", finished: "grid" },
+  viewModes: { won: "list", proposalItems: "list", orders: "list", finished: "list" },
   deletedItem: null,
   undoTimer: null,
   uploadContext: null,
   users: [],
   account: null,
   currentDate: null,
+  dashboardMonth: "",
+  observationItemId: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -90,6 +92,18 @@ function deliveryDeadlineBlock(item) {
   `;
 }
 
+function monthKey(value) {
+  const date = isoDate(value);
+  return date && !Number.isNaN(date) ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` : "";
+}
+
+function monthLabel(value) {
+  if (!value) return "Todos os meses";
+  const [year, month] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, 1);
+  return date.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+}
+
 function updateCountdowns() {
   $$(".countdown[data-deadline]").forEach((el) => {
     el.textContent = countdownLabel(el.dataset.deadline);
@@ -119,8 +133,17 @@ function fillForm(form, data = {}) {
 }
 
 function statusTag(status) {
-  const cls = /Habilitado|Adjudicada|emitida|Entregue/.test(status) ? "ok" : /cadastro|Aguardando|Futura/.test(status) ? "warn" : /Perdido/.test(status) ? "bad" : "";
+  const cls = statusClass(status);
   return `<span class="tag ${cls}">${status || "Sem status"}</span>`;
+}
+
+function statusClass(status = "") {
+  if (/Pagamento pendente|Perdido|Atrasada/.test(status)) return "bad";
+  if (/Adjudicada|Pago/.test(status)) return "status-adjudicated";
+  if (/Julgado e Habilitado/.test(status)) return "status-enabled";
+  if (/Aguardando Habilitação|cadastro|Futura|Proposta enviada/.test(status)) return "status-wait";
+  if (/emitida|Entregue|Finalizado/.test(status)) return "ok";
+  return "";
 }
 
 function itemValue(item) {
@@ -131,6 +154,12 @@ function itemTotal(item) {
   if (Number(item.selecionado_cadastro ?? 1) === 0) return 0;
   if (Number(item.valor_sigiloso || 0)) return 0;
   return Number(item.qtd || 0) * itemValue(item);
+}
+
+function itemBusinessTotal(item) {
+  if (Number(item.selecionado_cadastro ?? 1) === 0) return 0;
+  const unit = numberValue(item.valor_ganho) || numberValue(item.valor_unitário);
+  return Number(item.qtd || 0) * unit;
 }
 
 function itemTotalLabel(item) {
@@ -178,7 +207,7 @@ function productMeta(item, extras = "") {
 
 function wonStatusControl(item) {
   if (state.editWonId !== item.id) {
-    return `<span class="tag">${item.status}</span>`;
+    return statusTag(item.status);
   }
   return `
     <select class="status-select" onchange="saveWonStatus(${item.id}, this.value)">
@@ -213,6 +242,12 @@ function pricesComplete(tender) {
   ));
 }
 
+function tenderValueLabel(tender) {
+  const items = selectedTenderItems(tender);
+  if (items.length && items.every((item) => Number(item.valor_sigiloso || 0))) return "Sigiloso";
+  return money(tender.valor_total);
+}
+
 function flattenItems() {
   return state.tenders.flatMap((tender) => (tender.items || []).map((item) => ({ ...item, tender })));
 }
@@ -241,8 +276,16 @@ function searchLinks(item) {
 
 function renderDashboard() {
   const now = appNow();
-  const month = now.getMonth();
-  const year = now.getFullYear();
+  const activeItems = flattenItems().filter((item) => Number(item.selecionado_cadastro ?? 1) !== 0);
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const monthOptions = [...new Set([
+    currentMonth,
+    ...activeItems.flatMap((item) => [
+      monthKey(item.tender.data_limite || item.tender.created_at),
+      monthKey(item.prazo_entrega || item.tender.data_limite || item.tender.created_at),
+    ]).filter(Boolean),
+  ])].sort().reverse();
+  const selectedMonth = state.dashboardMonth === null ? "" : (state.dashboardMonth || currentMonth);
   const future = state.tenders
     .filter((t) => isoDate(t.data_limite) && isoDate(t.data_limite) >= now)
     .sort((a, b) => isoDate(a.data_limite) - isoDate(b.data_limite));
@@ -256,22 +299,37 @@ function renderDashboard() {
     .filter((i) => isoDate(i.prazo_entrega) && isoDate(i.prazo_entrega) >= now)
     .sort((a, b) => isoDate(a.prazo_entrega) - isoDate(b.prazo_entrega))
     .slice(0, 5);
-  const wonItems = flattenItems().filter((i) => WIN_STATUSES.includes(i.status) || ORDER_STATUSES.includes(i.tender.status));
-  const monthWon = wonItems.filter((i) => {
-    const d = isoDate(i.tender.data_limite || i.tender.created_at);
-    return d && d.getMonth() === month && d.getFullYear() === year;
-  }).reduce((sum, item) => sum + itemTotal(item), 0);
-  const yearWon = wonItems.filter((i) => {
-    const d = isoDate(i.tender.data_limite || i.tender.created_at);
-    return d && d.getFullYear() === year;
-  }).reduce((sum, item) => sum + itemTotal(item), 0);
+  const inSelectedMonth = (item, dateField = "tender") => {
+    if (!selectedMonth) return true;
+    const value = dateField === "order" ? (item.prazo_entrega || item.tender.data_limite || item.tender.created_at) : (item.tender.data_limite || item.tender.created_at);
+    const date = isoDate(value);
+    return date && `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` === selectedMonth;
+  };
+  const valorGanho = activeItems
+    .filter((item) => WIN_STATUSES.includes(item.status) && inSelectedMonth(item))
+    .reduce((sum, item) => sum + itemBusinessTotal(item), 0);
+  const valorEmpenhado = activeItems
+    .filter((item) => item.order_id && inSelectedMonth(item, "order"))
+    .reduce((sum, item) => sum + itemBusinessTotal(item), 0);
+  const valorPago = activeItems
+    .filter((item) => item.order_id && Number(item.pagamento_recebido || 0) && inSelectedMonth(item, "order"))
+    .reduce((sum, item) => sum + itemBusinessTotal(item), 0);
 
   $("#dashboard").innerHTML = `
+    <div class="dashboard-filter">
+      <label>Filtrar valores
+        <select id="dashboardMonth">
+          <option value="" ${selectedMonth === "" ? "selected" : ""}>Todos os meses</option>
+          ${monthOptions.map((option) => `<option value="${option}" ${selectedMonth === option ? "selected" : ""}>${monthLabel(option)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
     <div class="metrics">
       <div class="metric"><span>Próximas licitações</span><strong>${future.length}</strong></div>
       <div class="metric countdown-metric"><span>Próxima licitação em</span><strong class="countdown" data-deadline="${future[0]?.data_limite || ""}">${countdownLabel(future[0]?.data_limite)}</strong></div>
-      <div class="metric"><span>Itens ganhos no mês</span><strong>${money(monthWon)}</strong></div>
-      <div class="metric"><span>Itens ganhos no ano</span><strong>${money(yearWon)}</strong></div>
+      <div class="metric"><span>Valor ganho</span><strong>${money(valorGanho)}</strong></div>
+      <div class="metric"><span>Valor empenhado</span><strong>${money(valorEmpenhado)}</strong></div>
+      <div class="metric"><span>Valor pago</span><strong>${money(valorPago)}</strong></div>
     </div>
     <div class="dashboard-grid">
       <div class="alert-stack">
@@ -286,7 +344,16 @@ function renderDashboard() {
       </div>
     </div>
   `;
+  $("#dashboardMonth")?.addEventListener("change", (event) => {
+    state.dashboardMonth = event.target.value || null;
+    renderDashboard();
+  });
   updateCountdowns();
+}
+
+function clearDashboardMonth() {
+  state.dashboardMonth = null;
+  renderDashboard();
 }
 
 function alertTender(t) {
@@ -307,14 +374,14 @@ function alertTender(t) {
 function orderAlert(item) {
   const due = isoDate(item.prazo_entrega);
   const diff = due ? Math.ceil((due - appNow()) / 86400000) : 999;
-  const cls = diff < 0 ? "danger" : diff <= 7 ? "danger" : diff <= 15 ? "" : "ok";
+  const cls = diff < 0 ? "danger" : diff <= 15 ? "warn" : "ok";
   const label = diff < 0 ? `Vencida há ${Math.abs(diff)} dias` : `Vence em ${diff} dias`;
   return `
     <article class="alert-card ${cls}">
-      <strong>${label}</strong>
-      <div class="big">${brDate(item.prazo_entrega)}</div>
-      <p>${item.marca || ""} ${item.modelo || ""} · Pregão ${item.tender.pregão} · UASG ${item.tender.uasg}</p>
-      <div class="meta"><span class="tag">Qtd ${item.qtd || 0}</span><span class="tag">Unit. ${unitValueLabel(item)}</span><span class="tag">Total ${itemTotalLabel(item)}</span></div>
+      <div class="alert-head"><strong>${label}</strong><span>${brDate(item.prazo_entrega)}</span></div>
+      <p>${item.marca || ""} ${item.modelo || ""}</p>
+      <div class="meta"><span class="tag">Pregão ${item.tender.pregão}</span><span class="tag">UASG ${item.tender.uasg}</span></div>
+      ${productFacts(item)}
       <div class="actions"><button onclick="openDetail(${item.tender.id})">Abrir</button></div>
     </article>
   `;
@@ -329,7 +396,7 @@ function tenderCard(t) {
       <div>
         <h3>Pregão Eletrônico Nº ${t.pregão}</h3>
         <p>UASG ${t.uasg} - ${t.órgão}</p>
-        <div class="meta">${statusTag(t.status)}<span class="tag">${items.length} itens cadastrados</span><span class="tag ${ready ? "ok" : "warn"}">${ready ? "Preços completos" : "Preços pendentes"}</span><span class="tag">${money(t.valor_total)}</span><span class="tag">${t.localidade || "Sem localidade"}</span></div>
+        <div class="meta">${statusTag(t.status)}<span class="tag">${items.length} itens cadastrados</span><span class="tag ${ready ? "ok" : "warn"}">${ready ? "Preços completos" : "Preços pendentes"}</span><span class="tag">${tenderValueLabel(t)}</span><span class="tag">${t.localidade || "Sem localidade"}</span></div>
       </div>
       <div class="actions">
         <button onclick="openDetail(${t.id})">Abrir</button>
@@ -466,8 +533,8 @@ function renderFinished() {
         <span><small>Unitário</small><strong>${unitValueLabel(i)}</strong></span>
         <span><small>Total</small><strong>${itemTotalLabel(i)}</strong></span>
       </div>
-      ${productMeta(i, `<span class="tag">Entrega ${brDate(i.prazo_entrega)}</span><span class="tag ${Number(i.pagamento_recebido || 0) ? "ok" : "warn"}">${Number(i.pagamento_recebido || 0) ? "Pago" : "Pagamento pendente"}</span>`)}
-      <p class="address-text">${i.endereço_entrega || "Sem endereço registrado"}</p>
+      ${productMeta(i, `<span class="tag">Entrega ${brDate(i.prazo_entrega)}</span><span class="tag ${Number(i.pagamento_recebido || 0) ? "ok status-adjudicated" : "bad"}">${Number(i.pagamento_recebido || 0) ? "Pago" : "Pagamento pendente"}</span>`)}
+      <div class="address-text"><small>Endereço de entrega</small><span>${i.endereço_entrega || "Sem endereço registrado"}</span></div>
       <div class="actions"><button onclick="openDetail(${i.tender.id})">Abrir histórico</button><button onclick="togglePayment(${i.id}, ${Number(i.pagamento_recebido || 0) ? 0 : 1})">${Number(i.pagamento_recebido || 0) ? "Marcar não pago" : "Confirmar pagamento"}</button><button class="danger" onclick="deleteItemGlobal(${i.id}, 'item finalizado')">Apagar</button></div>
     </article>
   `).join("") || `<div class="card">Nenhum item finalizado ainda.</div>`;
@@ -482,12 +549,13 @@ async function openDetail(id) {
       <div>
         <h2>Pregão Eletrônico Nº ${t.pregão}</h2>
         <p>UASG ${t.uasg} - ${t.órgão}</p>
-        <div class="meta">${statusTag(t.status)}<span class="tag">${money(t.valor_total)}</span><span class="tag">${brDateTime(t.data_limite)}</span></div>
+        <div class="meta">${statusTag(t.status)}<span class="tag">${tenderValueLabel(t)}</span><span class="tag">${brDateTime(t.data_limite)}</span></div>
       </div>
       <div class="actions">
         <button onclick="showView('dashboard')">Voltar</button>
         <button onclick="editTender(${t.id})">Editar licitação</button>
         <button onclick='openUpload(${t.id}, "", "Proposta")'>Propostas</button>
+        <button onclick='openUpload(${t.id}, "", "Edital")'>Edital</button>
         <button onclick='openUpload(${t.id}, "", "Empenho")'>Empenho</button>
         <button onclick='openUpload(${t.id}, "", "Ata")'>Ata</button>
         <button onclick='openUpload(${t.id}, "", "Contrato")'>Contrato</button>
@@ -543,6 +611,9 @@ function itemGroup(title, lot, items) {
           <tbody>${items.map((item) => itemRow(item, lot)).join("")}</tbody>
         </table>
       </div>
+      <footer class="item-group-footer">
+        <button data-lot="${escapeAttr(lot || "")}" onclick="${lot ? "addLotItemFromButton(this)" : "addBlankItem()"}">+ Item</button>
+      </footer>
     </section>
   `;
 }
@@ -563,7 +634,7 @@ function itemRow(i, groupLot = "") {
       <tr class="readonly-row ${inactive ? "item-inactive" : ready ? "item-ready" : ""}" data-id="${i.id}">
         <td><input class="proposal-item row-select" type="checkbox" value="${i.id}" /></td>
         <td><div class="cell-main">${i.item || "-"}</div>${alt ? '<div class="cell-muted">Alternativa</div>' : ""}</td>
-        <td><div class="cell-main">${i.marca || "-"} · ${i.modelo || "-"}</div>${i.observação ? `<div class="obs-alert">Observação</div>` : ""}</td>
+        <td><div class="cell-main">${i.marca || "-"} · ${i.modelo || "-"}</div>${i.observação ? `<button type="button" class="obs-alert" data-observation="${escapeAttr(i.observação)}" onclick="editObservation(${i.id})">Observação</button>` : ""}</td>
         <td>${inactive ? '<span class="tag bad">Não disputar</span>' : '<span class="tag ok">Cadastrar</span>'}</td>
         <td class="num">${i.qtd || 0}</td>
         <td class="num">${Number(i.valor_sigiloso || 0) ? "Sigiloso" : money(i.valor_unitário)}</td>
@@ -599,7 +670,7 @@ function itemRow(i, groupLot = "") {
         <input type="hidden" name="opção_produto" value="${i.opção_produto || ""}" />
       </td>
       <td class="num"><input name="qtd" type="number" min="1" value="${i.qtd || 1}" ${alt ? "readonly" : ""} /></td>
-      <td class="num"><input name="valor_unitário" required value="${i.valor_unitário || ""}" ${alt ? "readonly" : ""} /></td>
+      <td class="num"><input name="valor_unitário" value="${i.valor_unitário || ""}" ${alt ? "readonly" : ""} /></td>
       <td><input name="valor_sigiloso" type="checkbox" ${Number(i.valor_sigiloso || 0) ? "checked" : ""} /></td>
       <td class="num live-total">${Number(i.valor_sigiloso || 0) ? "Sigiloso" : money(total)}</td>
       <td class="num"><input name="valor_cadastro" value="${i.valor_cadastro || ""}" ${alt ? "readonly" : ""} /></td>
@@ -759,7 +830,7 @@ async function saveItemRow(button) {
   if (!String(data.marca || "").trim()) missing.push("Marca");
   if (!String(data.modelo || "").trim()) missing.push("Modelo");
   if (numberValue(data.qtd) <= 0) missing.push("Qtd");
-  if (!isAlternative && numberValue(data.valor_unitário) <= 0) missing.push("Valor unitário");
+  if (!isAlternative && !data.valor_sigiloso && numberValue(data.valor_unitário) <= 0) missing.push("Valor unitário");
   if (missing.length) return alert(`Preencha os campos obrigatórios: ${missing.join(", ")}.`);
   const saved = await api("/api/items", { method: "POST", body: JSON.stringify(data) });
   if (data.selecionado_cadastro) {
@@ -796,10 +867,22 @@ function bindLiveTotals() {
     if (!qtd || !unit || !total) return;
     const update = () => {
       total.textContent = sigiloso?.checked ? "Sigiloso" : money(numberValue(qtd.value) * numberValue(unit.value));
+      unit.required = !sigiloso?.checked;
     };
     qtd.addEventListener("input", update);
     unit.addEventListener("input", update);
     sigiloso?.addEventListener("change", update);
+    $$("input, select", tr).forEach((field) => {
+      if (field.dataset.enterSaveBound) return;
+      field.dataset.enterSaveBound = "1";
+      field.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || field.type === "checkbox") return;
+        const saveButton = $(".inline-actions button", tr);
+        if (!saveButton) return;
+        event.preventDefault();
+        saveItemRow(saveButton);
+      });
+    });
     update();
   });
 }
@@ -848,10 +931,85 @@ async function editObservation(id) {
   if (!id) return alert("Salve o item antes de registrar observação.");
   const item = flattenItems().find((candidate) => Number(candidate.id) === Number(id));
   if (!item) return;
-  const text = prompt("Observação do item:", item.observação || "");
-  if (text === null) return;
-  await updateSingleItem(id, { observação: text });
+  state.observationItemId = id;
+  $("#observationText").value = item.observação || "";
+  $("#observationItemLabel").textContent = `Item ${item.item || "-"} - ${item.marca || ""} ${item.modelo || ""}`;
+  $("#observationDialog").showModal();
+}
+
+async function saveObservation(event) {
+  event.preventDefault();
+  if (!state.observationItemId) return;
+  await updateSingleItem(state.observationItemId, { observação: $("#observationText").value.trim() });
+  state.observationItemId = null;
+  $("#observationDialog").close();
   if (state.current) await openDetail(state.current.id);
+}
+
+function observationTooltip() {
+  let tooltip = $("#obsTooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.id = "obsTooltip";
+    tooltip.className = "obs-tooltip";
+    tooltip.setAttribute("role", "tooltip");
+    document.body.appendChild(tooltip);
+  }
+  return tooltip;
+}
+
+function positionObservationTooltip(event) {
+  const tooltip = observationTooltip();
+  const gap = 14;
+  const rect = tooltip.getBoundingClientRect();
+  let left = event.clientX + gap;
+  let top = event.clientY + gap;
+  if (left + rect.width > window.innerWidth - 12) left = event.clientX - rect.width - gap;
+  if (top + rect.height > window.innerHeight - 12) top = event.clientY - rect.height - gap;
+  tooltip.style.left = `${Math.max(12, left)}px`;
+  tooltip.style.top = `${Math.max(12, top)}px`;
+}
+
+function setObservationTooltipText(text) {
+  const tooltip = observationTooltip();
+  const title = document.createElement("strong");
+  title.textContent = "Observação";
+  const body = document.createElement("p");
+  body.textContent = text || "";
+  tooltip.replaceChildren(title, body);
+  return tooltip;
+}
+
+function bindObservationTooltip() {
+  document.addEventListener("mouseover", (event) => {
+    const target = event.target.closest(".obs-alert[data-observation]");
+    if (!target) return;
+    const tooltip = setObservationTooltipText(target.dataset.observation);
+    tooltip.classList.add("visible");
+    positionObservationTooltip(event);
+  });
+  document.addEventListener("mousemove", (event) => {
+    if (!$("#obsTooltip")?.classList.contains("visible")) return;
+    if (!event.target.closest(".obs-alert[data-observation]")) return;
+    positionObservationTooltip(event);
+  });
+  document.addEventListener("mouseout", (event) => {
+    if (!event.target.closest(".obs-alert[data-observation]")) return;
+    observationTooltip().classList.remove("visible");
+  });
+  document.addEventListener("focusin", (event) => {
+    const target = event.target.closest(".obs-alert[data-observation]");
+    if (!target) return;
+    const tooltip = setObservationTooltipText(target.dataset.observation);
+    const rect = target.getBoundingClientRect();
+    tooltip.classList.add("visible");
+    tooltip.style.left = `${Math.min(window.innerWidth - 360, rect.left)}px`;
+    tooltip.style.top = `${rect.bottom + 10}px`;
+  });
+  document.addEventListener("focusout", (event) => {
+    if (!event.target.closest(".obs-alert[data-observation]")) return;
+    observationTooltip().classList.remove("visible");
+  });
 }
 
 async function finishOrder(itemId) {
@@ -905,7 +1063,7 @@ function prepareProposal(format) {
       <div><strong>Item ${item.item || "-"}</strong><div class="cell-muted">${item.marca || ""} ${item.modelo || ""}</div></div>
       <div class="grid2">
         <label>Link do fornecedor <input name="link" required placeholder="https://..." value="${item.link_referência || item.link_br || item.link_usa || ""}" /></label>
-        <label>Valor ganho <input name="valor_ganho" required inputmode="decimal" placeholder="R$ 0,00" value="${item.valor_ganho || item.valor_unitário || ""}" /></label>
+        <label>Valor ganho <span class="money-input"><span>R$</span><input name="valor_ganho" required inputmode="decimal" placeholder="0,00" value="${item.valor_ganho || item.valor_unitário || ""}" /></span></label>
       </div>
     </div>
   `).join("");
@@ -993,9 +1151,10 @@ async function renderUploadExisting() {
   box.innerHTML = `<div class="upload-card">Carregando arquivos...</div>`;
   const docs = await api(`/api/attachments?tender_id=${tenderId}${itemId ? `&item_id=${itemId}` : ""}`);
   const filtered = docs.filter((doc) => doc.tipo === tipo);
+  const title = tipo === "Proposta" ? "Propostas geradas" : tipo === "Edital" ? "Editais anexados" : `${tipo}s anexados`;
   box.innerHTML = `
     <div class="upload-card">
-      <strong>${tipo === "Proposta" ? "Propostas geradas" : `${tipo}s anexados`}</strong>
+      <strong>${title}</strong>
       ${filtered.length ? filtered.map((doc) => `
         <div class="upload-row">
           <a href="/attachments/${doc.id}/download" target="_blank">${doc.filename}</a>
@@ -1049,6 +1208,8 @@ function renderUsers() {
 function clearUserForm() {
   fillForm($("#userForm"), { perfil: "Precificação", ativo: "on" });
   $("#userForm").elements.ativo.checked = true;
+  $("#userForm").elements.senha.required = true;
+  $("#userForm").elements.senha.placeholder = "Obrigatória para novo usuário";
 }
 
 function editUser(id) {
@@ -1056,6 +1217,8 @@ function editUser(id) {
   if (!user) return;
   fillForm($("#userForm"), { ...user, senha: "" });
   $("#userForm").elements.ativo.checked = Boolean(Number(user.ativo));
+  $("#userForm").elements.senha.required = false;
+  $("#userForm").elements.senha.placeholder = "Opcional ao editar";
 }
 
 async function saveUser(event) {
@@ -1063,9 +1226,15 @@ async function saveUser(event) {
   const form = event.target;
   const data = formData(form);
   data.ativo = form.elements.ativo.checked ? 1 : 0;
-  await api("/api/users", { method: "POST", body: JSON.stringify(data) });
-  clearUserForm();
-  await loadUsers();
+  if (!data.id && !data.senha) return alert("Informe uma senha inicial para o novo usuário.");
+  try {
+    await api("/api/users", { method: "POST", body: JSON.stringify(data) });
+    clearUserForm();
+    await loadUsers();
+    alert(data.id ? "Usuário atualizado com sucesso." : "Usuário criado com sucesso.");
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 async function deleteUser(id) {
@@ -1256,6 +1425,8 @@ async function boot() {
   });
   $("#uploadForm").addEventListener("submit", uploadFile);
   $("#userForm").addEventListener("submit", saveUser);
+  $("#observationForm").addEventListener("submit", saveObservation);
+  bindObservationTooltip();
   $("#uploadForm").elements.tipo.addEventListener("change", (event) => {
     if (!state.uploadContext) return;
     state.uploadContext.tipo = event.target.value;
