@@ -174,6 +174,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                qtd_empenhada REAL,
                 prazo_entrega TEXT,
                 ordem_fornecimento TEXT,
                 endereço_entrega TEXT,
@@ -290,6 +291,8 @@ def ensure_schema() -> None:
         order_cols = {row["name"] for row in con.execute("PRAGMA table_info(orders)")}
         if "pagamento_recebido" not in order_cols:
             con.execute("ALTER TABLE orders ADD COLUMN pagamento_recebido INTEGER NOT NULL DEFAULT 0")
+        if "qtd_empenhada" not in order_cols:
+            con.execute("ALTER TABLE orders ADD COLUMN qtd_empenhada REAL")
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS attachments (
@@ -344,8 +347,8 @@ def all_tenders(query: str = "", status: str = "") -> list[dict]:
                    COALESCE(SUM(
                        CASE
                            WHEN COALESCE(i.selecionado_cadastro, 1) = 0 THEN 0
-                           WHEN COALESCE(i.valor_sigiloso, 0) = 1 THEN 0
                            WHEN COALESCE(i.valor_ganho, 0) > 0 THEN i.qtd * i.valor_ganho
+                           WHEN COALESCE(i.valor_sigiloso, 0) = 1 THEN 0
                            ELSE i.qtd * i.valor_unitário
                        END
                    ), 0) AS valor_total
@@ -394,7 +397,7 @@ def tender_detail(tender_id: int) -> dict:
             raise KeyError("Licitação não encontrada")
         items = con.execute(
             """
-            SELECT i.*, o.id AS order_id, o.prazo_entrega, o.ordem_fornecimento,
+            SELECT i.*, o.id AS order_id, o.qtd_empenhada, o.prazo_entrega, o.ordem_fornecimento,
                    o.endereço_entrega, o.nota_empenho, o.status AS status_encomenda,
                    o.pagamento_recebido, o.observação AS observação_encomenda
             FROM items i
@@ -411,7 +414,7 @@ def tender_detail(tender_id: int) -> dict:
             money(row["qtd"]) * effective_unit_value(row)
             for row in data["items"]
             if int(row.get("selecionado_cadastro") if row.get("selecionado_cadastro") is not None else 1)
-            and not int(row.get("valor_sigiloso") or 0)
+            and (not int(row.get("valor_sigiloso") or 0) or money(row.get("valor_ganho")) > 0)
         )
         return data
 
@@ -546,8 +549,9 @@ def save_item(data: dict) -> int:
 
 
 def save_order(data: dict) -> int:
-    fields = ["item_id", "prazo_entrega", "ordem_fornecimento", "endereço_entrega", "nota_empenho", "status", "pagamento_recebido", "observação"]
+    fields = ["item_id", "qtd_empenhada", "prazo_entrega", "ordem_fornecimento", "endereço_entrega", "nota_empenho", "status", "pagamento_recebido", "observação"]
     values = {key: data.get(key, "") for key in fields}
+    values["qtd_empenhada"] = float(money(values["qtd_empenhada"])) if values["qtd_empenhada"] not in (None, "") else None
     values["status"] = values["status"] or "Pendente"
     values["pagamento_recebido"] = 1 if str(values["pagamento_recebido"]).lower() in ("1", "true", "on", "sim") else 0
     with connect() as con:
@@ -574,6 +578,9 @@ def bulk_update_items(data: dict) -> int:
     if data.get("valor_ganho") not in (None, ""):
         sets.append("valor_ganho = ?")
         args.append(float(money(data["valor_ganho"])))
+    if data.get("valor_sigiloso") not in (None, ""):
+        sets.append("valor_sigiloso = ?")
+        args.append(1 if str(data["valor_sigiloso"]).lower() in ("1", "true", "on", "sim") else 0)
     if not sets:
         return 0
     placeholders = ", ".join("?" for _ in item_ids)

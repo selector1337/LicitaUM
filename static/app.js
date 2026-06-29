@@ -15,6 +15,7 @@ const state = {
   currentDate: null,
   dashboardMonth: "",
   observationItemId: null,
+  proposalItemId: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -150,38 +151,44 @@ function itemValue(item) {
   return numberValue(item.valor_ganho) || numberValue(item.valor_unitário);
 }
 
+function displayQty(item) {
+  return item.order_id && numberValue(item.qtd_empenhada) > 0 ? numberValue(item.qtd_empenhada) : Number(item.qtd || 0);
+}
+
 function itemTotal(item) {
   if (Number(item.selecionado_cadastro ?? 1) === 0) return 0;
-  if (Number(item.valor_sigiloso || 0)) return 0;
+  if (Number(item.valor_sigiloso || 0) && !numberValue(item.valor_ganho)) return 0;
   return Number(item.qtd || 0) * itemValue(item);
 }
 
 function itemBusinessTotal(item) {
   if (Number(item.selecionado_cadastro ?? 1) === 0) return 0;
   const unit = numberValue(item.valor_ganho) || numberValue(item.valor_unitário);
-  return Number(item.qtd || 0) * unit;
+  return displayQty(item) * unit;
 }
 
 function itemTotalLabel(item) {
-  return Number(item.valor_sigiloso || 0) ? "Sigiloso" : money(itemTotal(item));
+  return Number(item.valor_sigiloso || 0) && !numberValue(item.valor_ganho) ? "Sigiloso" : money(itemTotal(item));
 }
 
 function unitValueLabel(item) {
-  return Number(item.valor_sigiloso || 0) ? "Sigiloso" : money(itemValue(item));
+  return Number(item.valor_sigiloso || 0) && !numberValue(item.valor_ganho) ? "Sigiloso" : money(itemValue(item));
 }
 
 function sectorSummary(rows) {
   const disputados = rows.filter((item) => Number(item.selecionado_cadastro ?? 1) !== 0);
-  const total = disputados.reduce((sum, item) => sum + itemTotal(item), 0);
+  const total = disputados.reduce((sum, item) => sum + itemBusinessTotal(item), 0);
   return `<div class="sector-summary"><span>${disputados.length} produtos</span><strong>${money(total)}</strong></div>`;
 }
 
 function productFacts(item) {
+  const qty = displayQty(item);
+  const total = qty * itemValue(item);
   return `
     <div class="product-facts">
-      <span><small>Qtd</small><strong>${item.qtd || 0}</strong></span>
+      <span><small>${item.order_id && numberValue(item.qtd_empenhada) > 0 ? "Qtd empenhada" : "Qtd"}</small><strong>${qty || 0}</strong></span>
       <span><small>Unitário</small><strong>${unitValueLabel(item)}</strong></span>
-      <span><small>Total</small><strong>${itemTotalLabel(item)}</strong></span>
+      <span><small>Total</small><strong>${Number(item.valor_sigiloso || 0) && !numberValue(item.valor_ganho) ? "Sigiloso" : money(total)}</strong></span>
     </div>
   `;
 }
@@ -250,6 +257,15 @@ function tenderValueLabel(tender) {
 
 function flattenItems() {
   return state.tenders.flatMap((tender) => (tender.items || []).map((item) => ({ ...item, tender })));
+}
+
+function itemFilterMatch(item, searchSelector, minSelector) {
+  const q = ($(searchSelector)?.value || "").toLowerCase().trim();
+  const min = numberValue($(minSelector)?.value || "");
+  const haystack = `${item.item || ""} ${item.marca || ""} ${item.modelo || ""} ${item.referência || ""} ${item.tender?.pregão || ""} ${item.tender?.uasg || ""} ${item.tender?.órgão || ""}`.toLowerCase();
+  if (q && !haystack.includes(q)) return false;
+  if (min > 0 && itemBusinessTotal(item) < min) return false;
+  return true;
 }
 
 function searchUrl(site, item) {
@@ -443,10 +459,15 @@ function renderPast() {
 
 function renderWon() {
   const status = $("#wonStatusFilter")?.value || "";
-  const rows = flattenItems()
+  const sort = $("#wonSort")?.value || "value_desc";
+  let rows = flattenItems()
     .filter((i) => WIN_STATUSES.includes(i.status) && !i.order_id)
     .filter((i) => !status || i.status === status)
-    .sort((a, b) => itemTotal(b) - itemTotal(a));
+    .filter((i) => itemFilterMatch(i, "#wonSearch", "#wonMinValue"));
+  if (sort === "value_asc") rows = rows.sort((a, b) => itemBusinessTotal(a) - itemBusinessTotal(b));
+  else if (sort === "status") rows = rows.sort((a, b) => String(a.status || "").localeCompare(String(b.status || "")));
+  else if (sort === "pregao") rows = rows.sort((a, b) => String(a.tender.pregão || "").localeCompare(String(b.tender.pregão || "")));
+  else rows = rows.sort((a, b) => itemBusinessTotal(b) - itemBusinessTotal(a));
   $("#wonList").classList.toggle("list-mode", state.viewModes.won === "list");
   $("#wonList").innerHTML = sectorSummary(rows) + (rows.map((i) => `
     <article class="product-card">
@@ -469,6 +490,7 @@ function renderWon() {
 function renderProposalItems() {
   const rows = flattenItems()
     .filter((i) => i.status === "Proposta enviada")
+    .filter((i) => itemFilterMatch(i, "#proposalSearch", "#proposalMinValue"))
     .sort((a, b) => String(a.tender.data_limite || "").localeCompare(String(b.tender.data_limite || "")));
   $("#proposalItemsList").classList.toggle("list-mode", state.viewModes.proposalItems === "list");
   $("#proposalItemsList").innerHTML = sectorSummary(rows) + (rows.map((i) => `
@@ -490,8 +512,11 @@ function renderProposalItems() {
 
 function renderOrders() {
   const sort = $("#orderSort")?.value || "due";
-  let rows = flattenItems().filter((i) => i.order_id && i.status_encomenda !== "Entregue");
-  if (sort === "value") rows = rows.sort((a, b) => itemTotal(b) - itemTotal(a));
+  let rows = flattenItems()
+    .filter((i) => i.order_id && i.status_encomenda !== "Entregue")
+    .filter((i) => itemFilterMatch(i, "#orderSearch", "#orderMinValue"));
+  if (sort === "value_desc") rows = rows.sort((a, b) => itemBusinessTotal(b) - itemBusinessTotal(a));
+  else if (sort === "value_asc") rows = rows.sort((a, b) => itemBusinessTotal(a) - itemBusinessTotal(b));
   else if (sort === "status") rows = rows.sort((a, b) => String(a.status_encomenda || "").localeCompare(String(b.status_encomenda || "")));
   else rows = rows.sort((a, b) => (isoDate(a.prazo_entrega) || new Date(8640000000000000)) - (isoDate(b.prazo_entrega) || new Date(8640000000000000)));
   $("#ordersList").classList.toggle("list-mode", state.viewModes.orders === "list");
@@ -515,8 +540,10 @@ function renderOrders() {
 
 function renderFinished() {
   const sort = $("#finishedSort")?.value || "recent";
-  let rows = flattenItems().filter((i) => i.status_encomenda === "Entregue" || i.status === "Entregue");
-  if (sort === "value") rows = rows.sort((a, b) => itemTotal(b) - itemTotal(a));
+  let rows = flattenItems()
+    .filter((i) => i.status_encomenda === "Entregue" || i.status === "Entregue")
+    .filter((i) => itemFilterMatch(i, "#finishedSearch", "#finishedMinValue"));
+  if (sort === "value") rows = rows.sort((a, b) => itemBusinessTotal(b) - itemBusinessTotal(a));
   else if (sort === "pregao") rows = rows.sort((a, b) => String(a.tender.pregão).localeCompare(String(b.tender.pregão)));
   else rows = rows.sort((a, b) => String(b.prazo_entrega || b.tender.data_limite || "").localeCompare(String(a.prazo_entrega || a.tender.data_limite || "")));
   $("#finishedList").classList.toggle("list-mode", state.viewModes.finished === "list");
@@ -529,9 +556,9 @@ function renderFinished() {
       </div>
       <div class="value">${itemTotalLabel(i)}</div>
       <div class="finished-facts">
-        <span><small>Qtd</small><strong>${i.qtd || 0}</strong></span>
+        <span><small>${i.order_id && numberValue(i.qtd_empenhada) > 0 ? "Qtd empenhada" : "Qtd"}</small><strong>${displayQty(i) || 0}</strong></span>
         <span><small>Unitário</small><strong>${unitValueLabel(i)}</strong></span>
-        <span><small>Total</small><strong>${itemTotalLabel(i)}</strong></span>
+        <span><small>Total</small><strong>${Number(i.valor_sigiloso || 0) && !numberValue(i.valor_ganho) ? "Sigiloso" : money(displayQty(i) * itemValue(i))}</strong></span>
       </div>
       ${productMeta(i, `<span class="tag">Entrega ${brDate(i.prazo_entrega)}</span><span class="tag ${Number(i.pagamento_recebido || 0) ? "ok status-adjudicated" : "bad"}">${Number(i.pagamento_recebido || 0) ? "Pago" : "Pagamento pendente"}</span>`)}
       <div class="address-text"><small>Endereço de entrega</small><span>${i.endereço_entrega || "Sem endereço registrado"}</span></div>
@@ -673,8 +700,8 @@ function itemRow(i, groupLot = "") {
       <td class="num"><input name="valor_unitário" value="${i.valor_unitário || ""}" ${alt ? "readonly" : ""} /></td>
       <td><input name="valor_sigiloso" type="checkbox" ${Number(i.valor_sigiloso || 0) ? "checked" : ""} /></td>
       <td class="num live-total">${Number(i.valor_sigiloso || 0) ? "Sigiloso" : money(total)}</td>
-      <td class="num"><input name="valor_cadastro" value="${i.valor_cadastro || ""}" ${alt ? "readonly" : ""} /></td>
-      <td class="num"><input name="valor_mínimo" value="${i.valor_mínimo || ""}" ${alt ? "readonly" : ""} /></td>
+      <td class="num"><input name="valor_cadastro" value="${i.valor_cadastro || ""}" /></td>
+      <td class="num"><input name="valor_mínimo" value="${i.valor_mínimo || ""}" /></td>
       <td>${searchLinks(i)}</td>
       <td class="inline-actions"><button onclick="saveItemRow(this)">Salvar</button><button onclick="${i.id ? "cancelEdit()" : "cancelNewItem(this)"}">Cancelar</button><button onclick="editObservation(${i.id || "null"})">Observação</button></td>
     </tr>
@@ -779,6 +806,11 @@ async function deleteTender(id) {
 async function deleteItemGlobal(id, label = "item") {
   const item = flattenItems().find((candidate) => Number(candidate.id) === Number(id));
   if (!item) return;
+  if ((label === "item ganho" || label === "item em proposta") && !confirm(`Remover este ${label} da etapa atual? O item continuará cadastrado no pregão.`)) return;
+  if (label === "item ganho" || label === "item em proposta") {
+    await updateSingleItem(id, { status: "Em cadastro de preços" });
+    return;
+  }
   if (!confirm(`Apagar este ${label}: item ${item.item || "-"} - ${item.marca || ""} ${item.modelo || ""}?`)) return;
   await fetch(`/api/items/${id}`, { method: "DELETE" });
   await load();
@@ -876,7 +908,7 @@ function bindLiveTotals() {
       if (field.dataset.enterSaveBound) return;
       field.dataset.enterSaveBound = "1";
       field.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" || field.type === "checkbox") return;
+        if (event.key !== "Enter") return;
         const saveButton = $(".inline-actions button", tr);
         if (!saveButton) return;
         event.preventDefault();
@@ -890,9 +922,11 @@ function bindLiveTotals() {
 async function applyBulk() {
   const ids = $$(".row-select").filter((box) => box.checked && box.value).map((box) => box.value);
   if (!ids.length) return alert("Selecione pelo menos um item já salvo.");
+  const payload = { item_ids: ids, status: $("#bulkStatus").value, valor_ganho: $("#bulkWonValue").value };
+  if (payload.valor_ganho) payload.valor_sigiloso = 0;
   await api("/api/items/bulk", {
     method: "POST",
-    body: JSON.stringify({ item_ids: ids, status: $("#bulkStatus").value, valor_ganho: $("#bulkWonValue").value }),
+    body: JSON.stringify(payload),
   });
   await load();
   await openDetail(state.current.id);
@@ -923,7 +957,26 @@ async function saveWonStatus(id, status) {
 }
 
 async function markItemProposal(id) {
-  await updateSingleItem(id, { status: "Proposta enviada" });
+  const item = flattenItems().find((candidate) => Number(candidate.id) === Number(id));
+  if (!item) return;
+  state.proposalItemId = id;
+  $("#proposalItemLabel").textContent = `Item ${item.item || "-"} · ${item.marca || ""} ${item.modelo || ""}`;
+  $("#proposalItemValue").value = item.valor_ganho || "";
+  $("#proposalItemDialog").showModal();
+}
+
+async function submitProposalItem(event) {
+  event.preventDefault();
+  if (!state.proposalItemId) return;
+  const value = $("#proposalItemValue").value.trim();
+  if (numberValue(value) <= 0) return alert("Informe o valor pelo qual o item foi para proposta.");
+  await updateSingleItem(state.proposalItemId, {
+    status: "Proposta enviada",
+    valor_ganho: value,
+    valor_sigiloso: 0,
+  });
+  state.proposalItemId = null;
+  $("#proposalItemDialog").close();
   alert("Item enviado para Itens em Proposta.");
 }
 
@@ -1019,6 +1072,7 @@ async function finishOrder(itemId) {
     method: "POST",
     body: JSON.stringify({
       item_id: item.id,
+      qtd_empenhada: item.qtd_empenhada || item.qtd || "",
       prazo_entrega: item.prazo_entrega,
       ordem_fornecimento: item.ordem_fornecimento,
       endereço_entrega: item.endereço_entrega,
@@ -1037,6 +1091,7 @@ async function togglePayment(itemId, paid) {
     method: "POST",
     body: JSON.stringify({
       item_id: item.id,
+      qtd_empenhada: item.qtd_empenhada || item.qtd || "",
       prazo_entrega: item.prazo_entrega,
       ordem_fornecimento: item.ordem_fornecimento,
       endereço_entrega: item.endereço_entrega,
@@ -1127,6 +1182,7 @@ function editTender(id) {
 function editOrder(item) {
   fillForm($("#orderForm"), {
     item_id: item.id,
+    qtd_empenhada: item.qtd_empenhada || item.qtd || "",
     prazo_entrega: item.prazo_entrega,
     ordem_fornecimento: item.ordem_fornecimento,
     endereço_entrega: item.endereço_entrega,
@@ -1287,7 +1343,7 @@ async function submitProposalLinks(event) {
     const valorGanho = $('input[name="valor_ganho"]', row).value.trim();
     if (!link) return alert("Informe o link do fornecedor para todos os itens selecionados.");
     if (!valorGanho) return alert("Informe o valor ganho para todos os itens selecionados.");
-    await api("/api/items", { method: "POST", body: JSON.stringify({ ...item, link_referência: link, valor_ganho: valorGanho }) });
+    await api("/api/items", { method: "POST", body: JSON.stringify({ ...item, link_referência: link, valor_ganho: valorGanho, valor_sigiloso: 0 }) });
   }
   $("#proposalLinksDialog").close();
   await load();
@@ -1399,8 +1455,17 @@ async function boot() {
   $("#pastYear").addEventListener("input", renderPast);
   $("#pastMonth").addEventListener("input", renderPast);
   $("#pastDate").addEventListener("change", renderPast);
+  $("#wonSearch").addEventListener("input", renderWon);
+  $("#wonMinValue").addEventListener("input", renderWon);
+  $("#wonSort").addEventListener("change", renderWon);
   $("#wonStatusFilter").addEventListener("change", renderWon);
+  $("#proposalSearch").addEventListener("input", renderProposalItems);
+  $("#proposalMinValue").addEventListener("input", renderProposalItems);
+  $("#orderSearch").addEventListener("input", renderOrders);
+  $("#orderMinValue").addEventListener("input", renderOrders);
   $("#orderSort").addEventListener("change", renderOrders);
+  $("#finishedSearch").addEventListener("input", renderFinished);
+  $("#finishedMinValue").addEventListener("input", renderFinished);
   $("#finishedSort").addEventListener("change", renderFinished);
   $$(".view-toggle button").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1412,9 +1477,10 @@ async function boot() {
 
   $("#tenderForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    await api("/api/tenders", { method: "POST", body: JSON.stringify(formData(event.target)) });
+    const saved = await api("/api/tenders", { method: "POST", body: JSON.stringify(formData(event.target)) });
     $("#tenderDialog").close();
     await load();
+    await openDetail(saved.id);
   });
   $("#orderForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1433,6 +1499,7 @@ async function boot() {
     renderUploadExisting();
   });
   $("#proposalLinksForm").addEventListener("submit", submitProposalLinks);
+  $("#proposalItemForm").addEventListener("submit", submitProposalItem);
   setInterval(updateCountdowns, 1000);
 
   if (state.account) await load();

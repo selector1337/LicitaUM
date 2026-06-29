@@ -96,6 +96,14 @@
             <p>Status permitidos: Aguardando Habilitação, Julgado e Habilitado, Adjudicada.</p>
           </div>
           <div class="filter-stack">
+            <input id="wonSearch" placeholder="Filtrar por produto, pregão, UASG..." />
+            <input id="wonMinValue" inputmode="decimal" placeholder="Valor mínimo" />
+            <select id="wonSort">
+              <option value="value_desc">Valor decrescente</option>
+              <option value="value_asc">Valor crescente</option>
+              <option value="status">Status</option>
+              <option value="pregao">Pregão</option>
+            </select>
             <select id="wonStatusFilter">
               <option value="">Todos os status</option>
               <option>Aguardando Habilitação</option>
@@ -114,7 +122,11 @@
             <h2>Itens em proposta</h2>
             <p>Itens enviados em proposta e aguardando avaliação do órgão.</p>
           </div>
-          <div class="view-toggle" data-target="proposalItems"><button data-mode="grid">Grid</button><button data-mode="list">Lista</button></div>
+          <div class="filter-stack">
+            <input id="proposalSearch" placeholder="Filtrar por produto, pregão, UASG..." />
+            <input id="proposalMinValue" inputmode="decimal" placeholder="Valor mínimo" />
+            <div class="view-toggle" data-target="proposalItems"><button data-mode="grid">Grid</button><button data-mode="list">Lista</button></div>
+          </div>
         </div>
         <div id="proposalItemsList" class="product-grid"></div>
       </section>
@@ -126,10 +138,13 @@
             <p>Ordenado por padrão pelo que vai vencer primeiro.</p>
           </div>
           <div class="filter-stack">
+            <input id="orderSearch" placeholder="Filtrar por produto, pregão, UASG..." />
+            <input id="orderMinValue" inputmode="decimal" placeholder="Valor mínimo" />
             <select id="orderSort">
               <option value="due">Vai vencer primeiro</option>
               <option value="status">Status</option>
-              <option value="value">Maior valor</option>
+              <option value="value_desc">Valor decrescente</option>
+              <option value="value_asc">Valor crescente</option>
             </select>
             <div class="view-toggle" data-target="orders"><button data-mode="grid">Grid</button><button data-mode="list">Lista</button></div>
           </div>
@@ -144,6 +159,8 @@
             <p>Itens já fornecidos ou processos encerrados, com histórico para consulta.</p>
           </div>
           <div class="filter-stack">
+            <input id="finishedSearch" placeholder="Filtrar por produto, pregão, UASG..." />
+            <input id="finishedMinValue" inputmode="decimal" placeholder="Valor mínimo" />
             <select id="finishedSort">
               <option value="recent">Mais recentes</option>
               <option value="value">Maior valor</option>
@@ -229,11 +246,14 @@
         <h2>Encomenda / empenho</h2>
         <input type="hidden" name="item_id" />
         <div class="grid3">
+          <label>Qtd empenhada <input name="qtd_empenhada" type="number" min="0" step="0.01" /></label>
           <label>Prazo para entrega <input name="prazo_entrega" type="date" /></label>
           <label>Ordem de fornecimento <input name="ordem_fornecimento" /></label>
-          <label>Nota de empenho <input name="nota_empenho" /></label>
         </div>
-        <label>Status <input name="status" placeholder="Pendente, Entregue..." /></label>
+        <div class="grid3">
+          <label>Nota de empenho <input name="nota_empenho" /></label>
+          <label>Status <input name="status" placeholder="Pendente, Entregue..." /></label>
+        </div>
         <label>Endereço de entrega <textarea name="endereço_entrega"></textarea></label>
         <label>Observação <textarea name="observação"></textarea></label>
         <footer>
@@ -276,6 +296,21 @@
         <footer>
           <button type="button" data-close>Cancelar</button>
           <button class="primary">Gerar proposta</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="proposalItemDialog">
+      <form method="dialog" id="proposalItemForm">
+        <button type="button" class="dialog-close" data-close aria-label="Fechar">×</button>
+        <h2>Item em proposta</h2>
+        <p id="proposalItemLabel" class="dialog-subtitle"></p>
+        <label>Valor da proposta
+          <span class="money-input"><span>R$</span><input id="proposalItemValue" required inputmode="decimal" placeholder="0,00" /></span>
+        </label>
+        <footer>
+          <button type="button" data-close>Cancelar</button>
+          <button class="primary">Enviar para proposta</button>
         </footer>
       </form>
     </dialog>
