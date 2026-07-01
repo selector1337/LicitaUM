@@ -272,7 +272,7 @@ function searchUrl(site, item) {
   const query = encodeURIComponent(`${item.marca || ""} ${item.modelo || item.referência || ""}`.trim());
   const urls = {
     ml: `https://lista.mercadolivre.com.br/${query}`,
-    amazon: `https://www.amazon.com.br/s?k=${query}`,
+    amazon: `https://www.amazon.com/s?k=${query}`,
     sweetwater: `https://www.sweetwater.com/store/search?s=${query}`,
     bh: `https://www.bhphotovideo.com/c/search?q=${query}`,
   };
