@@ -359,7 +359,14 @@ def all_tenders(query: str = "", status: str = "") -> list[dict]:
                            WHEN COALESCE(i.valor_sigiloso, 0) = 1 THEN 0
                            ELSE i.qtd * i.valor_unitário
                        END
-                   ), 0) AS valor_total
+                   ), 0) AS valor_total,
+                   COALESCE(SUM(
+                       CASE
+                           WHEN COALESCE(i.selecionado_cadastro, 1) = 0 THEN 0
+                           WHEN COALESCE(i.valor_mínimo, 0) <= 0 THEN 0
+                           ELSE i.qtd * i.valor_mínimo
+                       END
+                   ), 0) AS valor_minimo_total
             FROM tenders t
             LEFT JOIN items i ON i.tender_id = t.id
         """
@@ -423,6 +430,12 @@ def tender_detail(tender_id: int) -> dict:
             for row in data["items"]
             if int(row.get("selecionado_cadastro") if row.get("selecionado_cadastro") is not None else 1)
             and (not int(row.get("valor_sigiloso") or 0) or money(row.get("valor_ganho")) > 0)
+        )
+        data["valor_minimo_total"] = sum(
+            money(row["qtd"]) * money(row.get("valor_mínimo"))
+            for row in data["items"]
+            if int(row.get("selecionado_cadastro") if row.get("selecionado_cadastro") is not None else 1)
+            and money(row.get("valor_mínimo")) > 0
         )
         return data
 

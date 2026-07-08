@@ -255,6 +255,10 @@ function tenderValueLabel(tender) {
   return money(tender.valor_total);
 }
 
+function tenderMinimumLabel(tender) {
+  return `Total mínimo ${money(tender.valor_minimo_total)}`;
+}
+
 function flattenItems() {
   return state.tenders.flatMap((tender) => (tender.items || []).map((item) => ({ ...item, tender })));
 }
@@ -413,7 +417,7 @@ function tenderCard(t) {
       <div>
         <h3>Pregão Eletrônico Nº ${t.pregão}</h3>
         <p>UASG ${t.uasg} - ${t.órgão}</p>
-        <div class="meta">${statusTag(t.status)}<span class="tag">${platform}</span><span class="tag">${items.length} itens cadastrados</span><span class="tag ${ready ? "ok" : "warn"}">${ready ? "Preços completos" : "Preços pendentes"}</span><span class="tag">${tenderValueLabel(t)}</span><span class="tag">${t.localidade || "Sem localidade"}</span></div>
+        <div class="meta">${statusTag(t.status)}<span class="tag">${platform}</span><span class="tag">${items.length} itens cadastrados</span><span class="tag ${ready ? "ok" : "warn"}">${ready ? "Preços completos" : "Preços pendentes"}</span><span class="tag">${tenderValueLabel(t)}</span><span class="tag">${tenderMinimumLabel(t)}</span><span class="tag">${t.localidade || "Sem localidade"}</span></div>
       </div>
       <div class="actions">
         <button onclick="openDetail(${t.id})">Abrir</button>
@@ -581,7 +585,7 @@ async function openDetail(id) {
       <div>
         <h2>Pregão Eletrônico Nº ${t.pregão}</h2>
         <p>UASG ${t.uasg} - ${t.órgão}</p>
-        <div class="meta">${statusTag(t.status)}<span class="tag">${t.plataforma || "ComprasNet"}</span><span class="tag">${tenderValueLabel(t)}</span><span class="tag">${brDateTime(t.data_limite)}</span></div>
+        <div class="meta">${statusTag(t.status)}<span class="tag">${t.plataforma || "ComprasNet"}</span><span class="tag">${tenderValueLabel(t)}</span><span class="tag">${tenderMinimumLabel(t)}</span><span class="tag">${brDateTime(t.data_limite)}</span></div>
       </div>
       <div class="actions">
         <button onclick="showView('dashboard')">Voltar</button>
