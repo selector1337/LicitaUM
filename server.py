@@ -344,6 +344,12 @@ def all_tenders(query: str = "", status: str = "") -> list[dict]:
                    COALESCE(SUM(CASE WHEN COALESCE(i.selecionado_cadastro, 1) = 1 THEN 1 ELSE 0 END), 0) AS itens_ativos,
                    COALESCE(SUM(
                        CASE
+                           WHEN COALESCE(i.selecionado_cadastro, 1) = 1 AND COALESCE(i.valor_sigiloso, 0) = 1 THEN 1
+                           ELSE 0
+                       END
+                   ), 0) AS itens_sigilosos,
+                   COALESCE(SUM(
+                       CASE
                            WHEN COALESCE(i.selecionado_cadastro, 1) = 0 THEN 0
                            WHEN COALESCE(i.valor_cadastro, 0) <= 0 THEN 0
                            WHEN COALESCE(i.valor_mínimo, 0) <= 0 THEN 0
@@ -355,7 +361,6 @@ def all_tenders(query: str = "", status: str = "") -> list[dict]:
                    COALESCE(SUM(
                        CASE
                            WHEN COALESCE(i.selecionado_cadastro, 1) = 0 THEN 0
-                           WHEN COALESCE(i.valor_ganho, 0) > 0 THEN i.qtd * i.valor_ganho
                            WHEN COALESCE(i.valor_sigiloso, 0) = 1 THEN 0
                            ELSE i.qtd * i.valor_unitário
                        END
@@ -426,10 +431,10 @@ def tender_detail(tender_id: int) -> dict:
         data["items"] = [row_to_dict(row) for row in items]
         data["attachments"] = attachments_for(tender_id=tender_id)
         data["valor_total"] = sum(
-            money(row["qtd"]) * effective_unit_value(row)
+            money(row["qtd"]) * money(row.get("valor_unitário"))
             for row in data["items"]
             if int(row.get("selecionado_cadastro") if row.get("selecionado_cadastro") is not None else 1)
-            and (not int(row.get("valor_sigiloso") or 0) or money(row.get("valor_ganho")) > 0)
+            and not int(row.get("valor_sigiloso") or 0)
         )
         data["valor_minimo_total"] = sum(
             money(row["qtd"]) * money(row.get("valor_mínimo"))

@@ -251,12 +251,19 @@ function pricesComplete(tender) {
 
 function tenderValueLabel(tender) {
   const items = selectedTenderItems(tender);
+  if (!tender.items && Number(tender.itens_ativos || 0) > 0 && Number(tender.itens_sigilosos || 0) === Number(tender.itens_ativos || 0)) return "Sigiloso";
   if (items.length && items.every((item) => Number(item.valor_sigiloso || 0))) return "Sigiloso";
   return money(tender.valor_total);
 }
 
 function tenderMinimumLabel(tender) {
   return `Total mínimo ${money(tender.valor_minimo_total)}`;
+}
+
+function lotMinimumTotal(items) {
+  return items
+    .filter((item) => Number(item.selecionado_cadastro ?? 1) !== 0)
+    .reduce((sum, item) => sum + (Number(item.qtd || 0) * numberValue(item.valor_mínimo)), 0);
 }
 
 function flattenItems() {
@@ -628,12 +635,14 @@ function renderItemGroups(items) {
 }
 
 function itemGroup(title, lot, items) {
+  const lotSummary = lot ? `<span class="tag">Total mínimo do lote ${money(lotMinimumTotal(items))}</span>` : "";
   return `
     <section class="item-group" data-lot="${lot || ""}">
       <header>
         <div>
           <h3>${title}</h3>
           <p>${lot ? "Itens vinculados a um mesmo lote da licitação." : "Itens independentes, sem composição de lote."}</p>
+          ${lotSummary}
         </div>
         <button data-lot="${escapeAttr(lot || "")}" onclick="${lot ? "addLotItemFromButton(this)" : "addBlankItem()"}">+ Item</button>
       </header>
@@ -932,7 +941,6 @@ async function applyBulk() {
   const ids = $$(".row-select").filter((box) => box.checked && box.value).map((box) => box.value);
   if (!ids.length) return alert("Selecione pelo menos um item já salvo.");
   const payload = { item_ids: ids, status: $("#bulkStatus").value, valor_ganho: $("#bulkWonValue").value };
-  if (payload.valor_ganho) payload.valor_sigiloso = 0;
   await api("/api/items/bulk", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -982,7 +990,6 @@ async function submitProposalItem(event) {
   await updateSingleItem(state.proposalItemId, {
     status: "Proposta enviada",
     valor_ganho: value,
-    valor_sigiloso: 0,
   });
   state.proposalItemId = null;
   $("#proposalItemDialog").close();
@@ -1352,7 +1359,7 @@ async function submitProposalLinks(event) {
     const valorGanho = $('input[name="valor_ganho"]', row).value.trim();
     if (!link) return alert("Informe o link do fornecedor para todos os itens selecionados.");
     if (!valorGanho) return alert("Informe o valor ganho para todos os itens selecionados.");
-    await api("/api/items", { method: "POST", body: JSON.stringify({ ...item, link_referência: link, valor_ganho: valorGanho, valor_sigiloso: 0 }) });
+    await api("/api/items", { method: "POST", body: JSON.stringify({ ...item, link_referência: link, valor_ganho: valorGanho }) });
   }
   $("#proposalLinksDialog").close();
   await load();
