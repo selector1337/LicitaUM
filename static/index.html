@@ -66,7 +66,14 @@
             <h2>Licitações futuras</h2>
             <p>Organizadas por data e horário, para acompanhar o que ainda vamos participar.</p>
           </div>
-          <input id="futureSearch" placeholder="Filtrar por pregão, UASG ou órgão" />
+          <div class="filter-stack">
+            <input id="futureSearch" placeholder="Filtrar por pregão, UASG ou órgão" />
+            <select id="futurePlatform">
+              <option value="">Todas as plataformas</option>
+              <option value="ComprasNet">ComprasNet</option>
+              <option value="FIRJAN">FIRJAN</option>
+            </select>
+          </div>
         </div>
         <div id="futureList" class="timeline"></div>
       </section>
@@ -79,6 +86,11 @@
           </div>
           <div class="filter-stack">
             <input id="pastSearch" placeholder="Pregão, UASG, órgão ou produto" />
+            <select id="pastPlatform">
+              <option value="">Todas as plataformas</option>
+              <option value="ComprasNet">ComprasNet</option>
+              <option value="FIRJAN">FIRJAN</option>
+            </select>
             <div class="grid3">
               <input id="pastYear" placeholder="Ano" inputmode="numeric" />
               <input id="pastMonth" placeholder="Mês" inputmode="numeric" />
@@ -227,6 +239,12 @@
           <label>UASG <input name="uasg" required placeholder="930105" /></label>
           <label>Localidade <input name="localidade" placeholder="Jacareí-SP" /></label>
         </div>
+        <label>Plataforma
+          <select name="plataforma">
+            <option value="ComprasNet">ComprasNet</option>
+            <option value="FIRJAN">FIRJAN</option>
+          </select>
+        </label>
         <label>Órgão <input name="órgão" required placeholder="CÂMARA MUNICIPAL..." /></label>
         <div class="grid3">
           <label>Data limite <input name="data_limite" type="datetime-local" /></label>

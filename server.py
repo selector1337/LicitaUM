@@ -15,6 +15,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from zoneinfo import ZoneInfo
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -28,6 +29,10 @@ OUTPUTS = ROOT / "propostas_geradas"
 UPLOADS = ROOT / "uploads"
 TEMPLATE_SOURCE = Path(r"C:\Users\selector\Downloads\Proposta Vogen Cosmetics (10).docx")
 TEMPLATE_COPY = ROOT / "modelo_proposta_vogen.docx"
+
+
+def current_business_date() -> date:
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
 
 
 STATUS = [
@@ -144,6 +149,7 @@ def init_db() -> None:
                 uasg TEXT NOT NULL,
                 órgão TEXT NOT NULL,
                 localidade TEXT,
+                plataforma TEXT NOT NULL DEFAULT 'ComprasNet',
                 data_limite TEXT,
                 data_proposta TEXT,
                 status TEXT NOT NULL DEFAULT 'Em cadastro de preços',
@@ -275,6 +281,8 @@ def init_db() -> None:
 def ensure_schema() -> None:
     with connect() as con:
         tender_cols = {row["name"] for row in con.execute("PRAGMA table_info(tenders)")}
+        if "plataforma" not in tender_cols:
+            con.execute("ALTER TABLE tenders ADD COLUMN plataforma TEXT NOT NULL DEFAULT 'ComprasNet'")
         if "data_proposta" not in tender_cols:
             con.execute("ALTER TABLE tenders ADD COLUMN data_proposta TEXT")
         item_cols = {row["name"] for row in con.execute("PRAGMA table_info(items)")}
@@ -428,8 +436,9 @@ def read_body(handler: BaseHTTPRequestHandler) -> dict:
 
 
 def save_tender(data: dict) -> int:
-    fields = ["pregão", "uasg", "órgão", "localidade", "data_limite", "data_proposta", "status", "modalidade", "observação"]
+    fields = ["pregão", "uasg", "órgão", "localidade", "plataforma", "data_limite", "data_proposta", "status", "modalidade", "observação"]
     values = {key: data.get(key, "") for key in fields}
+    values["plataforma"] = values["plataforma"] or "ComprasNet"
     values["status"] = values["status"] or "Em cadastro de preços"
     values["modalidade"] = values["modalidade"] or "Pregão Eletrônico"
     with connect() as con:
@@ -755,11 +764,7 @@ def generate_proposal(tender_id: int, item_ids: list[int] | None = None) -> Path
         elif "O valor total dessa proposta é de" in text:
             set_paragraph_text(paragraph, f"O valor total dessa proposta é de {brl(total)} ({number_words(total)}).")
 
-    when = tender.get("data_proposta") or date.today().isoformat()
-    try:
-        when_date = datetime.fromisoformat(when).date()
-    except ValueError:
-        when_date = date.today()
+    when_date = current_business_date()
     months = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
     date_line = f"Muqui/ES, {when_date.day} de {months[when_date.month - 1].capitalize()} de {when_date.year}"
     for paragraph in doc.paragraphs:
@@ -868,7 +873,7 @@ class App(BaseHTTPRequestHandler):
                 }
                 return self.send_file(file_path, types.get(file_path.suffix, "application/octet-stream"), cache_control="no-store")
             if path == "/api/meta":
-                return self.send_json({"status": STATUS, "current_date": date.today().isoformat()})
+                return self.send_json({"status": STATUS, "current_date": current_business_date().isoformat()})
             if path == "/api/users":
                 return self.send_json(list_users())
             if path == "/api/attachments":

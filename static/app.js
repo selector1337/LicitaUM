@@ -406,13 +406,14 @@ function orderAlert(item) {
 function tenderCard(t) {
   const items = selectedTenderItems(t);
   const ready = pricesComplete(t);
+  const platform = t.plataforma || "ComprasNet";
   return `
     <article class="card timeline-card ${ready ? "tender-ready" : ""}">
       <div class="date-badge"><strong>${brDate(t.data_limite)}</strong><span>${isoDate(t.data_limite)?.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) || "sem horário"}</span></div>
       <div>
         <h3>Pregão Eletrônico Nº ${t.pregão}</h3>
         <p>UASG ${t.uasg} - ${t.órgão}</p>
-        <div class="meta">${statusTag(t.status)}<span class="tag">${items.length} itens cadastrados</span><span class="tag ${ready ? "ok" : "warn"}">${ready ? "Preços completos" : "Preços pendentes"}</span><span class="tag">${tenderValueLabel(t)}</span><span class="tag">${t.localidade || "Sem localidade"}</span></div>
+        <div class="meta">${statusTag(t.status)}<span class="tag">${platform}</span><span class="tag">${items.length} itens cadastrados</span><span class="tag ${ready ? "ok" : "warn"}">${ready ? "Preços completos" : "Preços pendentes"}</span><span class="tag">${tenderValueLabel(t)}</span><span class="tag">${t.localidade || "Sem localidade"}</span></div>
       </div>
       <div class="actions">
         <button onclick="openDetail(${t.id})">Abrir</button>
@@ -425,19 +426,22 @@ function tenderCard(t) {
 
 function renderFuture() {
   const q = ($("#futureSearch")?.value || "").toLowerCase();
+  const platform = $("#futurePlatform")?.value || "";
   const now = appNow();
   const rows = state.tenders
     .filter((t) => {
       const date = isoDate(t.data_limite);
       return date ? date >= now : t.status === "Futura licitação";
     })
-    .filter((t) => `${t.pregão} ${t.uasg} ${t.órgão}`.toLowerCase().includes(q))
+    .filter((t) => !platform || (t.plataforma || "ComprasNet") === platform)
+    .filter((t) => `${t.pregão} ${t.uasg} ${t.órgão} ${t.plataforma || "ComprasNet"}`.toLowerCase().includes(q))
     .sort((a, b) => (isoDate(a.data_limite) || new Date(8640000000000000)) - (isoDate(b.data_limite) || new Date(8640000000000000)));
   $("#futureList").innerHTML = rows.map(tenderCard).join("") || `<div class="card">Nenhuma licitação futura encontrada.</div>`;
 }
 
 function renderPast() {
   const q = ($("#pastSearch")?.value || "").toLowerCase();
+  const platform = $("#pastPlatform")?.value || "";
   const year = ($("#pastYear")?.value || "").trim();
   const month = ($("#pastMonth")?.value || "").trim();
   const exactDate = ($("#pastDate")?.value || "").trim();
@@ -445,9 +449,10 @@ function renderPast() {
   const rows = state.tenders
     .filter((t) => isoDate(t.data_limite) && isoDate(t.data_limite) < now)
     .filter((t) => {
-      const haystack = `${t.pregão} ${t.uasg} ${t.órgão} ${(t.items || []).map((i) => `${i.marca} ${i.modelo} ${i.referência}`).join(" ")}`.toLowerCase();
+      const haystack = `${t.pregão} ${t.uasg} ${t.órgão} ${t.plataforma || "ComprasNet"} ${(t.items || []).map((i) => `${i.marca} ${i.modelo} ${i.referência}`).join(" ")}`.toLowerCase();
       const d = isoDate(t.data_limite);
       if (q && !haystack.includes(q)) return false;
+      if (platform && (t.plataforma || "ComprasNet") !== platform) return false;
       if (year && String(d.getFullYear()) !== year) return false;
       if (month && String(d.getMonth() + 1).padStart(2, "0") !== month.padStart(2, "0")) return false;
       if (exactDate && d.toISOString().slice(0, 10) !== exactDate) return false;
@@ -576,7 +581,7 @@ async function openDetail(id) {
       <div>
         <h2>Pregão Eletrônico Nº ${t.pregão}</h2>
         <p>UASG ${t.uasg} - ${t.órgão}</p>
-        <div class="meta">${statusTag(t.status)}<span class="tag">${tenderValueLabel(t)}</span><span class="tag">${brDateTime(t.data_limite)}</span></div>
+        <div class="meta">${statusTag(t.status)}<span class="tag">${t.plataforma || "ComprasNet"}</span><span class="tag">${tenderValueLabel(t)}</span><span class="tag">${brDateTime(t.data_limite)}</span></div>
       </div>
       <div class="actions">
         <button onclick="showView('dashboard')">Voltar</button>
@@ -1446,12 +1451,14 @@ async function boot() {
     updateThemeButton();
   });
   $("#newTender").addEventListener("click", () => {
-    fillForm($("#tenderForm"), { status: "Futura licitação" });
+    fillForm($("#tenderForm"), { status: "Futura licitação", plataforma: "ComprasNet" });
     $("#tenderDialog").showModal();
   });
   $$("[data-close]").forEach((btn) => btn.addEventListener("click", () => btn.closest("dialog").close()));
   $("#futureSearch").addEventListener("input", renderFuture);
+  $("#futurePlatform").addEventListener("change", renderFuture);
   $("#pastSearch").addEventListener("input", renderPast);
+  $("#pastPlatform").addEventListener("change", renderPast);
   $("#pastYear").addEventListener("input", renderPast);
   $("#pastMonth").addEventListener("input", renderPast);
   $("#pastDate").addEventListener("change", renderPast);
