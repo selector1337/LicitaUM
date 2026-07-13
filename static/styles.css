@@ -1176,6 +1176,10 @@ td input[type="checkbox"], .proposal-bar input, .bulk-bar input { width: auto; m
 .inline-actions {
   white-space: nowrap;
   vertical-align: middle;
+  text-align: left;
+}
+.inline-actions button {
+  vertical-align: middle;
 }
 .inline-actions button + button { margin-left: 6px; }
 .cell-main { font-weight: 700; }
