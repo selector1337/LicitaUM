@@ -284,6 +284,7 @@ function searchUrl(site, item) {
   const urls = {
     ml: `https://lista.mercadolivre.com.br/${query}`,
     amazon: `https://www.amazon.com/s?k=${query}`,
+    google: `https://www.google.com/search?q=${query}`,
     sweetwater: `https://www.sweetwater.com/store/search?s=${query}`,
     bh: `https://www.bhphotovideo.com/c/search?q=${query}`,
   };
@@ -293,10 +294,11 @@ function searchUrl(site, item) {
 function searchLinks(item) {
   return `
     <div class="search-links">
-      <a href="${searchUrl("ml", item)}" target="_blank">ML</a>
-      <a href="${searchUrl("amazon", item)}" target="_blank">Amazon</a>
-      <a href="${searchUrl("sweetwater", item)}" target="_blank">Sweetwater</a>
-      <a href="${searchUrl("bh", item)}" target="_blank">B&H</a>
+      <a href="${searchUrl("ml", item)}" target="_blank" rel="noopener noreferrer">ML</a>
+      <a href="${searchUrl("amazon", item)}" target="_blank" rel="noopener noreferrer">Amazon</a>
+      <a href="${searchUrl("google", item)}" target="_blank" rel="noopener noreferrer">Google</a>
+      <a href="${searchUrl("sweetwater", item)}" target="_blank" rel="noopener noreferrer">Sweetwater</a>
+      <a href="${searchUrl("bh", item)}" target="_blank" rel="noopener noreferrer">B&H</a>
     </div>
   `;
 }

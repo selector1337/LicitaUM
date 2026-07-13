@@ -1211,7 +1211,18 @@ body.dark .readonly-row td { background: rgba(14, 25, 31, .7); }
   color: #fff;
 }
 .sheet-wrap table button { white-space: nowrap; }
-.search-links { display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; align-items: center; }
+.search-links {
+  display: flex;
+  gap: 5px;
+  flex-wrap: nowrap;
+  justify-content: center;
+  align-items: center;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+.search-links::-webkit-scrollbar { display: none; }
 .search-links a {
   color: var(--brand);
   border: 1px solid var(--line);
