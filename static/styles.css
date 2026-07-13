@@ -1173,7 +1173,11 @@ td input[type="checkbox"], .proposal-bar input, .bulk-bar input { width: auto; m
   margin-top: 6px;
   color: var(--muted);
 }
-.inline-actions { display: flex; gap: 6px; }
+.inline-actions {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.inline-actions button + button { margin-left: 6px; }
 .cell-main { font-weight: 700; }
 .cell-muted { color: var(--muted); font-size: 12px; margin-top: 3px; }
 .readonly-row td { background: color-mix(in srgb, var(--panel), var(--panel-2) 35%); }
