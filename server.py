@@ -10,6 +10,7 @@ import subprocess
 import base64
 import mimetypes
 import uuid
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -48,11 +49,20 @@ STATUS = [
 ]
 
 
-def connect() -> sqlite3.Connection:
-    con = sqlite3.connect(DB_PATH)
+@contextmanager
+def connect():
+    con = sqlite3.connect(DB_PATH, timeout=15)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
-    return con
+    con.execute("PRAGMA busy_timeout = 10000")
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
 def money(value) -> Decimal:
@@ -141,6 +151,8 @@ def init_db() -> None:
         TEMPLATE_COPY.write_bytes(TEMPLATE_SOURCE.read_bytes())
 
     with connect() as con:
+        con.execute("PRAGMA journal_mode = WAL")
+        con.execute("PRAGMA synchronous = NORMAL")
         con.executescript(
             """
             CREATE TABLE IF NOT EXISTS tenders (
@@ -328,6 +340,17 @@ def ensure_schema() -> None:
             )
             """
         )
+        con.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_tenders_data_limite ON tenders(data_limite);
+            CREATE INDEX IF NOT EXISTS idx_tenders_status ON tenders(status);
+            CREATE INDEX IF NOT EXISTS idx_items_tender_id ON items(tender_id);
+            CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
+            CREATE INDEX IF NOT EXISTS idx_orders_item_id ON orders(item_id);
+            CREATE INDEX IF NOT EXISTS idx_attachments_tender_id ON attachments(tender_id);
+            CREATE INDEX IF NOT EXISTS idx_attachments_item_id ON attachments(item_id);
+            """
+        )
         users = con.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if not users:
             con.execute(
@@ -443,6 +466,47 @@ def tender_detail(tender_id: int) -> dict:
             and money(row.get("valor_mínimo")) > 0
         )
         return data
+
+
+def application_state() -> list[dict]:
+    tenders = all_tenders()
+    if not tenders:
+        return []
+
+    by_id = {int(tender["id"]): tender for tender in tenders}
+    for tender in tenders:
+        tender["items"] = []
+        tender["attachments"] = []
+
+    with connect() as con:
+        items = con.execute(
+            """
+            SELECT i.*, o.id AS order_id, o.qtd_empenhada, o.prazo_entrega, o.ordem_fornecimento,
+                   o.endereço_entrega, o.nota_empenho, o.status AS status_encomenda,
+                   o.pagamento_recebido, o.observação AS observação_encomenda
+            FROM items i
+            LEFT JOIN orders o ON o.item_id = i.id
+            ORDER BY i.tender_id, CAST(i.item AS INTEGER), i.id
+            """
+        ).fetchall()
+        attachments = con.execute(
+            "SELECT * FROM attachments ORDER BY uploaded_at DESC, id DESC"
+        ).fetchall()
+
+    for row in items:
+        item = row_to_dict(row)
+        tender = by_id.get(int(item["tender_id"]))
+        if tender:
+            tender["items"].append(item)
+
+    for row in attachments:
+        attachment = row_to_dict(row)
+        tender_id = attachment.get("tender_id")
+        tender = by_id.get(int(tender_id)) if tender_id else None
+        if tender:
+            tender["attachments"].append(attachment)
+
+    return tenders
 
 
 def read_body(handler: BaseHTTPRequestHandler) -> dict:
@@ -898,6 +962,8 @@ class App(BaseHTTPRequestHandler):
                 tender_id = int(qs.get("tender_id", ["0"])[0] or 0)
                 item_id = int(qs.get("item_id", ["0"])[0] or 0)
                 return self.send_json(attachments_for(tender_id or None, item_id or None))
+            if path == "/api/state":
+                return self.send_json(application_state())
             if path == "/api/tenders":
                 return self.send_json(all_tenders(qs.get("q", [""])[0], qs.get("status", [""])[0]))
             if path.startswith("/api/tenders/"):
@@ -970,11 +1036,16 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"error": str(exc)}, 500)
 
 
+class AppServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 if __name__ == "__main__":
     init_db()
     ensure_schema()
     host = os.environ.get("LICITAUM_HOST", "127.0.0.1")
     port = int(os.environ.get("LICITAUM_PORT", "8765"))
-    server = ThreadingHTTPServer((host, port), App)
+    server = AppServer((host, port), App)
     print(f"LicitaUM aberto em http://{host}:{port}")
     server.serve_forever()

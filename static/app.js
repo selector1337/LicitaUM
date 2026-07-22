@@ -586,7 +586,7 @@ function renderFinished() {
 }
 
 async function openDetail(id) {
-  state.current = await api(`/api/tenders/${id}`);
+  state.current = state.tenders.find((tender) => Number(tender.id) === Number(id)) || await api(`/api/tenders/${id}`);
   showView("detail");
   const t = state.current;
   $("#detail").innerHTML = `
@@ -1426,11 +1426,10 @@ function renderViewToggles() {
 }
 
 async function load() {
-  state.tenders = await api("/api/tenders");
-  for (const tender of state.tenders) {
-    const detail = await api(`/api/tenders/${tender.id}`);
-    tender.items = detail.items;
-    tender.attachments = detail.attachments;
+  const currentId = state.current?.id;
+  state.tenders = await api("/api/state");
+  if (currentId) {
+    state.current = state.tenders.find((tender) => Number(tender.id) === Number(currentId)) || null;
   }
   renderAll();
 }
