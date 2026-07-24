@@ -262,9 +262,12 @@
     <dialog id="orderDialog">
       <form method="dialog" id="orderForm">
         <h2>Encomenda / empenho</h2>
+        <p id="orderDialogSubtitle" class="dialog-subtitle"></p>
+        <input type="hidden" name="id" />
         <input type="hidden" name="item_id" />
+        <div id="orderItemsFields" class="order-items-fields"></div>
         <div class="grid3">
-          <label>Qtd empenhada <input name="qtd_empenhada" type="number" min="0" step="0.01" /></label>
+          <label id="singleOrderQuantity">Qtd empenhada <input name="qtd_empenhada" type="number" min="0.01" step="0.01" required /></label>
           <label>Prazo para entrega <input name="prazo_entrega" type="date" /></label>
           <label>Ordem de fornecimento <input name="ordem_fornecimento" /></label>
         </div>

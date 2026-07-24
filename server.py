@@ -313,6 +313,26 @@ def ensure_schema() -> None:
             con.execute("ALTER TABLE orders ADD COLUMN pagamento_recebido INTEGER NOT NULL DEFAULT 0")
         if "qtd_empenhada" not in order_cols:
             con.execute("ALTER TABLE orders ADD COLUMN qtd_empenhada REAL")
+        if "group_id" not in order_cols:
+            con.execute("ALTER TABLE orders ADD COLUMN group_id TEXT")
+        con.execute(
+            """
+            UPDATE orders
+            SET qtd_empenhada = (SELECT qtd FROM items WHERE items.id = orders.item_id)
+            WHERE qtd_empenhada IS NULL OR qtd_empenhada <= 0
+            """
+        )
+        con.execute(
+            "UPDATE orders SET group_id = 'legacy-' || id WHERE group_id IS NULL OR group_id = ''"
+        )
+        con.execute(
+            """
+            UPDATE items
+            SET status = 'Adjudicada'
+            WHERE status = 'Entregue'
+              AND EXISTS (SELECT 1 FROM orders WHERE orders.item_id = items.id)
+            """
+        )
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS attachments (
@@ -347,6 +367,7 @@ def ensure_schema() -> None:
             CREATE INDEX IF NOT EXISTS idx_items_tender_id ON items(tender_id);
             CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
             CREATE INDEX IF NOT EXISTS idx_orders_item_id ON orders(item_id);
+            CREATE INDEX IF NOT EXISTS idx_orders_group_id ON orders(group_id);
             CREATE INDEX IF NOT EXISTS idx_attachments_tender_id ON attachments(tender_id);
             CREATE INDEX IF NOT EXISTS idx_attachments_item_id ON attachments(item_id);
             """
@@ -433,25 +454,53 @@ def attachments_for(tender_id: int | None = None, item_id: int | None = None) ->
         return [row_to_dict(row) for row in con.execute(sql, args)]
 
 
+def items_with_orders(con: sqlite3.Connection, tender_id: int | None = None) -> list[dict]:
+    where = " WHERE tender_id = ?" if tender_id is not None else ""
+    args = (tender_id,) if tender_id is not None else ()
+    item_rows = con.execute(
+        f"SELECT * FROM items{where} ORDER BY tender_id, CAST(item AS INTEGER), id",
+        args,
+    ).fetchall()
+    items = [row_to_dict(row) for row in item_rows]
+    if not items:
+        return []
+
+    item_by_id = {int(item["id"]): item for item in items}
+    placeholders = ", ".join("?" for _ in item_by_id)
+    order_rows = con.execute(
+        f"SELECT * FROM orders WHERE item_id IN ({placeholders}) ORDER BY id",
+        list(item_by_id),
+    ).fetchall()
+
+    for item in items:
+        item["orders"] = []
+
+    for row in order_rows:
+        order = row_to_dict(row)
+        item = item_by_id.get(int(order["item_id"]))
+        if not item:
+            continue
+        quantity = money(order.get("qtd_empenhada"))
+        if quantity <= 0:
+            quantity = money(item.get("qtd"))
+        order["qtd_empenhada"] = float(quantity)
+        item["orders"].append(order)
+
+    for item in items:
+        committed = sum(money(order.get("qtd_empenhada")) for order in item["orders"])
+        won = money(item.get("qtd"))
+        item["qtd_empenhada_total"] = float(committed)
+        item["qtd_pendente"] = float(max(won - committed, Decimal("0")))
+    return items
+
+
 def tender_detail(tender_id: int) -> dict:
     with connect() as con:
         tender = con.execute("SELECT * FROM tenders WHERE id = ?", (tender_id,)).fetchone()
         if not tender:
             raise KeyError("Licitação não encontrada")
-        items = con.execute(
-            """
-            SELECT i.*, o.id AS order_id, o.qtd_empenhada, o.prazo_entrega, o.ordem_fornecimento,
-                   o.endereço_entrega, o.nota_empenho, o.status AS status_encomenda,
-                   o.pagamento_recebido, o.observação AS observação_encomenda
-            FROM items i
-            LEFT JOIN orders o ON o.item_id = i.id
-            WHERE i.tender_id = ?
-            ORDER BY CAST(i.item AS INTEGER), i.id
-            """,
-            (tender_id,),
-        ).fetchall()
         data = row_to_dict(tender)
-        data["items"] = [row_to_dict(row) for row in items]
+        data["items"] = items_with_orders(con, tender_id)
         data["attachments"] = attachments_for(tender_id=tender_id)
         data["valor_total"] = sum(
             money(row["qtd"]) * money(row.get("valor_unitário"))
@@ -479,22 +528,12 @@ def application_state() -> list[dict]:
         tender["attachments"] = []
 
     with connect() as con:
-        items = con.execute(
-            """
-            SELECT i.*, o.id AS order_id, o.qtd_empenhada, o.prazo_entrega, o.ordem_fornecimento,
-                   o.endereço_entrega, o.nota_empenho, o.status AS status_encomenda,
-                   o.pagamento_recebido, o.observação AS observação_encomenda
-            FROM items i
-            LEFT JOIN orders o ON o.item_id = i.id
-            ORDER BY i.tender_id, CAST(i.item AS INTEGER), i.id
-            """
-        ).fetchall()
+        items = items_with_orders(con)
         attachments = con.execute(
             "SELECT * FROM attachments ORDER BY uploaded_at DESC, id DESC"
         ).fetchall()
 
-    for row in items:
-        item = row_to_dict(row)
+    for item in items:
         tender = by_id.get(int(item["tender_id"]))
         if tender:
             tender["items"].append(item)
@@ -639,23 +678,72 @@ def save_item(data: dict) -> int:
         return int(cur.lastrowid)
 
 
-def save_order(data: dict) -> int:
-    fields = ["item_id", "qtd_empenhada", "prazo_entrega", "ordem_fornecimento", "endereço_entrega", "nota_empenho", "status", "pagamento_recebido", "observação"]
+def save_order_in_connection(con: sqlite3.Connection, data: dict, group_id: str | None = None) -> int:
+    fields = ["item_id", "qtd_empenhada", "prazo_entrega", "ordem_fornecimento", "endereço_entrega", "nota_empenho", "status", "pagamento_recebido", "observação", "group_id"]
     values = {key: data.get(key, "") for key in fields}
-    values["qtd_empenhada"] = float(money(values["qtd_empenhada"])) if values["qtd_empenhada"] not in (None, "") else None
+    quantity = money(values["qtd_empenhada"])
+    if quantity <= 0:
+        raise ValueError("A quantidade empenhada deve ser maior que zero.")
+    values["qtd_empenhada"] = float(quantity)
     values["status"] = values["status"] or "Pendente"
     values["pagamento_recebido"] = 1 if str(values["pagamento_recebido"]).lower() in ("1", "true", "on", "sim") else 0
-    with connect() as con:
-        existing = con.execute("SELECT id FROM orders WHERE item_id = ?", (values["item_id"],)).fetchone()
-        if existing:
-            sets = ", ".join(f"{field} = ?" for field in fields)
-            con.execute(f"UPDATE orders SET {sets} WHERE id = ?", [values[field] for field in fields] + [existing["id"]])
-            return int(existing["id"])
-        cur = con.execute(
-            f"INSERT INTO orders ({', '.join(fields)}) VALUES ({', '.join('?' for _ in fields)})",
-            [values[field] for field in fields],
+    order_id = int(data["id"]) if data.get("id") else None
+    item = con.execute("SELECT qtd FROM items WHERE id = ?", (values["item_id"],)).fetchone()
+    if not item:
+        raise ValueError("Item não encontrado.")
+    committed = con.execute(
+        "SELECT COALESCE(SUM(qtd_empenhada), 0) FROM orders WHERE item_id = ? AND id != COALESCE(?, -1)",
+        (values["item_id"], order_id),
+    ).fetchone()[0]
+    available = money(item["qtd"]) - money(committed)
+    if quantity > available:
+        raise ValueError(f"Quantidade superior ao saldo disponível ({available}).")
+
+    if order_id:
+        existing = con.execute("SELECT group_id FROM orders WHERE id = ?", (order_id,)).fetchone()
+        if not existing:
+            raise ValueError("Encomenda não encontrada.")
+        values["group_id"] = group_id or values["group_id"] or existing["group_id"] or f"order-{order_id}"
+        sets = ", ".join(f"{field} = ?" for field in fields)
+        con.execute(
+            f"UPDATE orders SET {sets} WHERE id = ?",
+            [values[field] for field in fields] + [order_id],
         )
-        return int(cur.lastrowid)
+        return order_id
+
+    values["group_id"] = group_id or values["group_id"] or uuid.uuid4().hex
+    cur = con.execute(
+        f"INSERT INTO orders ({', '.join(fields)}) VALUES ({', '.join('?' for _ in fields)})",
+        [values[field] for field in fields],
+    )
+    return int(cur.lastrowid)
+
+
+def save_order(data: dict) -> int:
+    with connect() as con:
+        return save_order_in_connection(con, data)
+
+
+def save_orders_bulk(data: dict) -> list[int]:
+    entries = data.get("items") or []
+    if not entries:
+        raise ValueError("Selecione ao menos um item.")
+    common = {
+        key: data.get(key, "")
+        for key in ("prazo_entrega", "ordem_fornecimento", "endereço_entrega", "nota_empenho", "status", "pagamento_recebido", "observação")
+    }
+    group_id = uuid.uuid4().hex
+    ids = []
+    with connect() as con:
+        for entry in entries:
+            ids.append(
+                save_order_in_connection(
+                    con,
+                    {**common, "item_id": entry.get("item_id"), "qtd_empenhada": entry.get("qtd_empenhada")},
+                    group_id,
+                )
+            )
+    return ids
 
 
 def bulk_update_items(data: dict) -> int:
@@ -1001,6 +1089,8 @@ class App(BaseHTTPRequestHandler):
                 return self.send_json({"id": save_item(data)})
             if path == "/api/orders":
                 return self.send_json({"id": save_order(data)})
+            if path == "/api/orders/bulk":
+                return self.send_json({"ids": save_orders_bulk(data)})
             if path == "/api/items/bulk":
                 return self.send_json({"updated": bulk_update_items(data)})
             if path == "/api/attachments":

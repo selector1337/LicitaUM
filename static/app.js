@@ -16,6 +16,7 @@ const state = {
   dashboardMonth: "",
   observationItemId: null,
   proposalItemId: null,
+  orderItemIds: [],
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -175,10 +176,10 @@ function unitValueLabel(item) {
   return Number(item.valor_sigiloso || 0) && !numberValue(item.valor_ganho) ? "Sigiloso" : money(itemValue(item));
 }
 
-function sectorSummary(rows) {
+function sectorSummary(rows, label = "") {
   const disputados = rows.filter((item) => Number(item.selecionado_cadastro ?? 1) !== 0);
   const total = disputados.reduce((sum, item) => sum + itemBusinessTotal(item), 0);
-  return `<div class="sector-summary"><span>${disputados.length} produtos</span><strong>${money(total)}</strong></div>`;
+  return `<div class="sector-summary">${label ? `<b>${label}</b>` : ""}<span>${disputados.length} produtos</span><strong>${money(total)}</strong></div>`;
 }
 
 function productFacts(item) {
@@ -270,6 +271,26 @@ function flattenItems() {
   return state.tenders.flatMap((tender) => (tender.items || []).map((item) => ({ ...item, tender })));
 }
 
+function flattenOrders() {
+  return flattenItems().flatMap((item) => (item.orders || []).map((order) => ({
+    ...item,
+    order_id: order.id,
+    group_id: order.group_id,
+    qtd_empenhada: order.qtd_empenhada,
+    prazo_entrega: order.prazo_entrega,
+    ordem_fornecimento: order.ordem_fornecimento,
+    endereço_entrega: order.endereço_entrega,
+    nota_empenho: order.nota_empenho,
+    status_encomenda: order.status,
+    pagamento_recebido: order.pagamento_recebido,
+    observação_encomenda: order.observação,
+  })));
+}
+
+function pendingOrderQty(item) {
+  return Math.max(numberValue(item.qtd) - numberValue(item.qtd_empenhada_total), 0);
+}
+
 function itemFilterMatch(item, searchSelector, minSelector) {
   const q = ($(searchSelector)?.value || "").toLowerCase().trim();
   const min = numberValue($(minSelector)?.value || "");
@@ -306,19 +327,20 @@ function searchLinks(item) {
 function renderDashboard() {
   const now = appNow();
   const activeItems = flattenItems().filter((item) => Number(item.selecionado_cadastro ?? 1) !== 0);
+  const allOrders = flattenOrders();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const monthOptions = [...new Set([
     currentMonth,
-    ...activeItems.flatMap((item) => [
+    ...activeItems.map((item) =>
       monthKey(item.tender.data_limite || item.tender.created_at),
-      monthKey(item.prazo_entrega || item.tender.data_limite || item.tender.created_at),
-    ]).filter(Boolean),
+    ).filter(Boolean),
+    ...allOrders.map((item) => monthKey(item.prazo_entrega || item.tender.data_limite || item.tender.created_at)).filter(Boolean),
   ])].sort().reverse();
   const selectedMonth = state.dashboardMonth === null ? "" : (state.dashboardMonth || currentMonth);
   const future = state.tenders
     .filter((t) => isoDate(t.data_limite) && isoDate(t.data_limite) >= now)
     .sort((a, b) => isoDate(a.data_limite) - isoDate(b.data_limite));
-  const orders = flattenItems().filter((i) => i.order_id && i.status_encomenda !== "Entregue");
+  const orders = allOrders.filter((i) => i.status_encomenda !== "Entregue");
   const riskyOrders = orders
     .filter((i) => isoDate(i.prazo_entrega))
     .sort((a, b) => isoDate(a.prazo_entrega) - isoDate(b.prazo_entrega))
@@ -337,11 +359,11 @@ function renderDashboard() {
   const valorGanho = activeItems
     .filter((item) => WIN_STATUSES.includes(item.status) && inSelectedMonth(item))
     .reduce((sum, item) => sum + itemBusinessTotal(item), 0);
-  const valorEmpenhado = activeItems
-    .filter((item) => item.order_id && inSelectedMonth(item, "order"))
+  const valorEmpenhado = allOrders
+    .filter((item) => inSelectedMonth(item, "order"))
     .reduce((sum, item) => sum + itemBusinessTotal(item), 0);
-  const valorPago = activeItems
-    .filter((item) => item.order_id && Number(item.pagamento_recebido || 0) && inSelectedMonth(item, "order"))
+  const valorPago = allOrders
+    .filter((item) => Number(item.pagamento_recebido || 0) && inSelectedMonth(item, "order"))
     .reduce((sum, item) => sum + itemBusinessTotal(item), 0);
 
   $("#dashboard").innerHTML = `
@@ -479,30 +501,40 @@ function renderWon() {
   const status = $("#wonStatusFilter")?.value || "";
   const sort = $("#wonSort")?.value || "value_desc";
   let rows = flattenItems()
-    .filter((i) => WIN_STATUSES.includes(i.status) && !i.order_id)
+    .filter((i) => WIN_STATUSES.includes(i.status) && pendingOrderQty(i) > 0)
     .filter((i) => !status || i.status === status)
+    .map((i) => ({ ...i, qtd_original: i.qtd, qtd: pendingOrderQty(i) }))
     .filter((i) => itemFilterMatch(i, "#wonSearch", "#wonMinValue"));
   if (sort === "value_asc") rows = rows.sort((a, b) => itemBusinessTotal(a) - itemBusinessTotal(b));
   else if (sort === "status") rows = rows.sort((a, b) => String(a.status || "").localeCompare(String(b.status || "")));
   else if (sort === "pregao") rows = rows.sort((a, b) => String(a.tender.pregão || "").localeCompare(String(b.tender.pregão || "")));
   else rows = rows.sort((a, b) => itemBusinessTotal(b) - itemBusinessTotal(a));
   $("#wonList").classList.toggle("list-mode", state.viewModes.won === "list");
-  $("#wonList").innerHTML = sectorSummary(rows) + (rows.map((i) => `
+  $("#wonList").innerHTML = sectorSummary(rows) + `
+    <div class="bulk-order-bar">
+      <div><strong id="wonSelectionCount">0 selecionados</strong><span>Selecione os itens que pertencem ao mesmo empenho.</span></div>
+      <button id="createBulkOrder" class="primary" disabled>Colocar selecionados em encomenda</button>
+    </div>
+  ` + (rows.map((i) => `
     <article class="product-card">
-      <header><h3>Item ${i.item || "-"}</h3>${wonStatusControl(i)}</header>
+      <header>
+        <label class="item-selector"><input class="won-order-select" type="checkbox" value="${i.id}" onchange="updateWonSelection()" /><span>Item ${i.item || "-"}</span></label>
+        ${wonStatusControl(i)}
+      </header>
       ${productIdentity(i)}
       <div class="value">${itemTotalLabel(i)}</div>
       ${productFacts(i)}
-      ${productMeta(i)}
+      ${productMeta(i, `<span class="tag">Ganho ${i.qtd_original}</span><span class="tag">Empenhado ${numberValue(i.qtd_empenhada_total)}</span><span class="tag status-wait">Pendente ${i.qtd}</span>`)}
       <div class="actions">
         <button onclick="editWonData(${i.id})">${state.editWonId === i.id ? "Cancelar edição" : "Editar status"}</button>
         <button onclick="openDetail(${i.tender.id})">Abrir pregão</button>
-        <button onclick='editOrder(${JSON.stringify(i)})'>Colocar em encomenda</button>
+        <button onclick="editOrder(${i.id})">Colocar em encomenda</button>
         <button onclick='openUpload(${i.tender.id}, ${i.id}, "Empenho")'>Upload empenho</button>
         <button class="danger" onclick="deleteItemGlobal(${i.id}, 'item ganho')">Apagar</button>
       </div>
     </article>
-  `).join("") || `<div class="card">Nenhum item ganho sem empenho.</div>`);
+  `).join("") || `<div class="card">Nenhum item ganho com quantidade pendente de empenho.</div>`);
+  $("#createBulkOrder")?.addEventListener("click", openBulkOrder);
 }
 
 function renderProposalItems() {
@@ -530,8 +562,8 @@ function renderProposalItems() {
 
 function renderOrders() {
   const sort = $("#orderSort")?.value || "due";
-  let rows = flattenItems()
-    .filter((i) => i.order_id && i.status_encomenda !== "Entregue")
+  let rows = flattenOrders()
+    .filter((i) => i.status_encomenda !== "Entregue")
     .filter((i) => itemFilterMatch(i, "#orderSearch", "#orderMinValue"));
   if (sort === "value_desc") rows = rows.sort((a, b) => itemBusinessTotal(b) - itemBusinessTotal(a));
   else if (sort === "value_asc") rows = rows.sort((a, b) => itemBusinessTotal(a) - itemBusinessTotal(b));
@@ -548,9 +580,9 @@ function renderOrders() {
         <div class="value">${itemTotalLabel(i)}</div>
         ${productFacts(i)}
         ${deliveryDeadlineBlock(i)}
-        ${productMeta(i)}
+        ${productMeta(i, `<span class="tag">Encomenda ${String(i.group_id || i.order_id).slice(-6)}</span>`)}
         <div class="address-text"><small>Endereço de entrega</small><span>${i.endereço_entrega || "Sem endereço de entrega"}</span></div>
-        <div class="actions"><button onclick="openDetail(${i.tender.id})">Abrir</button><button onclick='editOrder(${JSON.stringify(i)})'>Editar</button><button onclick='openUpload(${i.tender.id}, ${i.id}, "Empenho")'>Empenho</button><button class="primary" onclick="finishOrder(${i.id})">Finalizar</button><button class="danger" onclick="deleteOrder(${i.order_id})">Apagar</button></div>
+        <div class="actions"><button onclick="openDetail(${i.tender.id})">Abrir</button><button onclick="editOrder(${i.id}, ${i.order_id})">Editar</button><button onclick='openUpload(${i.tender.id}, ${i.id}, "Empenho")'>Empenho</button><button class="primary" onclick="finishOrder(${i.order_id})">Finalizar</button><button class="danger" onclick="deleteOrder(${i.order_id})">Apagar</button></div>
       </article>
     `;
   }).join("") || `<div class="card">Nenhuma encomenda cadastrada ainda.</div>`);
@@ -558,14 +590,14 @@ function renderOrders() {
 
 function renderFinished() {
   const sort = $("#finishedSort")?.value || "recent";
-  let rows = flattenItems()
-    .filter((i) => i.status_encomenda === "Entregue" || i.status === "Entregue")
+  let rows = flattenOrders()
+    .filter((i) => i.status_encomenda === "Entregue")
     .filter((i) => itemFilterMatch(i, "#finishedSearch", "#finishedMinValue"));
   if (sort === "value") rows = rows.sort((a, b) => itemBusinessTotal(b) - itemBusinessTotal(a));
   else if (sort === "pregao") rows = rows.sort((a, b) => String(a.tender.pregão).localeCompare(String(b.tender.pregão)));
   else rows = rows.sort((a, b) => String(b.prazo_entrega || b.tender.data_limite || "").localeCompare(String(a.prazo_entrega || a.tender.data_limite || "")));
   $("#finishedList").classList.toggle("list-mode", state.viewModes.finished === "list");
-  $("#finishedList").innerHTML = rows.map((i) => `
+  $("#finishedList").innerHTML = sectorSummary(rows, "Total entregue") + (rows.map((i) => `
     <article class="product-card finished-card">
       <header><h3>Item ${i.item || "-"}</h3><span class="tag ok">Finalizado</span></header>
       <div class="finished-title">
@@ -578,11 +610,11 @@ function renderFinished() {
         <span><small>Unitário</small><strong>${unitValueLabel(i)}</strong></span>
         <span><small>Total</small><strong>${Number(i.valor_sigiloso || 0) && !numberValue(i.valor_ganho) ? "Sigiloso" : money(displayQty(i) * itemValue(i))}</strong></span>
       </div>
-      ${productMeta(i, `<span class="tag">Entrega ${brDate(i.prazo_entrega)}</span><span class="tag ${Number(i.pagamento_recebido || 0) ? "ok status-adjudicated" : "bad"}">${Number(i.pagamento_recebido || 0) ? "Pago" : "Pagamento pendente"}</span>`)}
+      ${productMeta(i, `<span class="tag">Entrega ${brDate(i.prazo_entrega)}</span><span class="tag">Encomenda ${String(i.group_id || i.order_id).slice(-6)}</span><span class="tag ${Number(i.pagamento_recebido || 0) ? "ok status-adjudicated" : "bad"}">${Number(i.pagamento_recebido || 0) ? "Pago" : "Pagamento pendente"}</span>`)}
       <div class="address-text"><small>Endereço de entrega</small><span>${i.endereço_entrega || "Sem endereço registrado"}</span></div>
-      <div class="actions"><button onclick="openDetail(${i.tender.id})">Abrir histórico</button><button onclick="togglePayment(${i.id}, ${Number(i.pagamento_recebido || 0) ? 0 : 1})">${Number(i.pagamento_recebido || 0) ? "Marcar não pago" : "Confirmar pagamento"}</button><button class="danger" onclick="deleteItemGlobal(${i.id}, 'item finalizado')">Apagar</button></div>
+      <div class="actions"><button onclick="openDetail(${i.tender.id})">Abrir histórico</button><button onclick="togglePayment(${i.order_id}, ${Number(i.pagamento_recebido || 0) ? 0 : 1})">${Number(i.pagamento_recebido || 0) ? "Marcar não pago" : "Confirmar pagamento"}</button><button class="danger" onclick="deleteOrder(${i.order_id})">Apagar</button></div>
     </article>
-  `).join("") || `<div class="card">Nenhum item finalizado ainda.</div>`;
+  `).join("") || `<div class="card">Nenhum item finalizado ainda.</div>`);
 }
 
 async function openDetail(id) {
@@ -1083,12 +1115,13 @@ function bindObservationTooltip() {
   });
 }
 
-async function finishOrder(itemId) {
-  const item = flattenItems().find((candidate) => Number(candidate.id) === Number(itemId));
+async function finishOrder(orderId) {
+  const item = flattenOrders().find((candidate) => Number(candidate.order_id) === Number(orderId));
   if (!item) return;
   await api("/api/orders", {
     method: "POST",
     body: JSON.stringify({
+      id: item.order_id,
       item_id: item.id,
       qtd_empenhada: item.qtd_empenhada || item.qtd || "",
       prazo_entrega: item.prazo_entrega,
@@ -1099,15 +1132,16 @@ async function finishOrder(itemId) {
       observação: item.observação_encomenda || "",
     }),
   });
-  await updateSingleItem(item.id, { status: "Entregue" });
+  await load();
 }
 
-async function togglePayment(itemId, paid) {
-  const item = flattenItems().find((candidate) => Number(candidate.id) === Number(itemId));
+async function togglePayment(orderId, paid) {
+  const item = flattenOrders().find((candidate) => Number(candidate.order_id) === Number(orderId));
   if (!item) return;
   await api("/api/orders", {
     method: "POST",
     body: JSON.stringify({
+      id: item.order_id,
       item_id: item.id,
       qtd_empenhada: item.qtd_empenhada || item.qtd || "",
       prazo_entrega: item.prazo_entrega,
@@ -1197,10 +1231,46 @@ function editTender(id) {
   $("#tenderDialog").showModal();
 }
 
-function editOrder(item) {
+function updateWonSelection() {
+  const selected = $$(".won-order-select:checked");
+  const count = selected.length;
+  if ($("#wonSelectionCount")) $("#wonSelectionCount").textContent = `${count} selecionado${count === 1 ? "" : "s"}`;
+  if ($("#createBulkOrder")) $("#createBulkOrder").disabled = count === 0;
+}
+
+function openBulkOrder() {
+  const ids = $$(".won-order-select:checked").map((box) => Number(box.value));
+  if (!ids.length) return;
+  const items = flattenItems().filter((item) => ids.includes(Number(item.id)));
+  state.orderItemIds = ids;
+  fillForm($("#orderForm"), { status: "Pendente" });
+  $("#singleOrderQuantity").hidden = true;
+  $("#orderForm").elements.qtd_empenhada.required = false;
+  $("#orderDialogSubtitle").textContent = `${items.length} produtos serão agrupados nesta encomenda.`;
+  $("#orderItemsFields").innerHTML = items.map((item) => {
+    const pending = pendingOrderQty(item);
+    return `
+      <label class="order-item-quantity">
+        <span><strong>Item ${item.item || "-"}</strong><small>${item.marca || "-"} · ${item.modelo || item.referência || "-"}</small></span>
+        <span>Qtd empenhada <input data-order-item="${item.id}" type="number" min="0.01" max="${pending}" step="0.01" value="${pending}" required /></span>
+      </label>
+    `;
+  }).join("");
+  $("#orderDialog").showModal();
+}
+
+function editOrder(itemId, orderId = null) {
+  state.orderItemIds = [];
+  const item = orderId
+    ? flattenOrders().find((candidate) => Number(candidate.order_id) === Number(orderId))
+    : flattenItems().find((candidate) => Number(candidate.id) === Number(itemId));
+  if (!item) return;
+  const canonical = flattenItems().find((candidate) => Number(candidate.id) === Number(itemId));
+  const available = pendingOrderQty(canonical) + (orderId ? numberValue(item.qtd_empenhada) : 0);
   fillForm($("#orderForm"), {
+    id: orderId || "",
     item_id: item.id,
-    qtd_empenhada: item.qtd_empenhada || item.qtd || "",
+    qtd_empenhada: orderId ? item.qtd_empenhada : available,
     prazo_entrega: item.prazo_entrega,
     ordem_fornecimento: item.ordem_fornecimento,
     endereço_entrega: item.endereço_entrega,
@@ -1208,6 +1278,13 @@ function editOrder(item) {
     status: item.status_encomenda || "Pendente",
     observação: item.observação_encomenda,
   });
+  $("#singleOrderQuantity").hidden = false;
+  $("#orderForm").elements.qtd_empenhada.required = true;
+  $("#orderForm").elements.qtd_empenhada.max = available;
+  $("#orderItemsFields").innerHTML = "";
+  $("#orderDialogSubtitle").textContent = orderId
+    ? `Editando o empenho do item ${item.item || "-"}.`
+    : `Saldo disponível do item ${item.item || "-"}: ${available}.`;
   $("#orderDialog").showModal();
 }
 
@@ -1503,7 +1580,20 @@ async function boot() {
   });
   $("#orderForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    await api("/api/orders", { method: "POST", body: JSON.stringify(formData(event.target)) });
+    const data = formData(event.target);
+    if (state.orderItemIds.length) {
+      data.items = $$("#orderItemsFields [data-order-item]").map((input) => ({
+        item_id: Number(input.dataset.orderItem),
+        qtd_empenhada: input.value,
+      }));
+      delete data.id;
+      delete data.item_id;
+      delete data.qtd_empenhada;
+      await api("/api/orders/bulk", { method: "POST", body: JSON.stringify(data) });
+    } else {
+      await api("/api/orders", { method: "POST", body: JSON.stringify(data) });
+    }
+    state.orderItemIds = [];
     $("#orderDialog").close();
     await load();
     if (state.current) await openDetail(state.current.id);
