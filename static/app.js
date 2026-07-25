@@ -560,6 +560,76 @@ function renderProposalItems() {
   `).join("") || `<div class="card">Nenhum item em proposta no momento.</div>`);
 }
 
+function groupOrderRows(rows) {
+  const groups = new Map();
+  rows.forEach((item) => {
+    const key = item.group_id || `order-${item.order_id}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  });
+  return [...groups.entries()].map(([id, items]) => ({ id, items }));
+}
+
+function orderProductRow(item, finished = false) {
+  const paid = Number(item.pagamento_recebido || 0);
+  return `
+    <div class="order-group-product">
+      <div class="order-product-identity">
+        <span>Item ${item.item || "-"}</span>
+        <strong>${item.marca || "-"} · ${item.modelo || item.referência || "-"}</strong>
+      </div>
+      ${productFacts(item)}
+      <div class="order-product-actions">
+        ${finished ? `
+          <span class="tag ${paid ? "ok status-adjudicated" : "bad"}">${paid ? "Pago" : "Pagamento pendente"}</span>
+          <button onclick="togglePayment(${item.order_id}, ${paid ? 0 : 1})">${paid ? "Marcar não pago" : "Confirmar pagamento"}</button>
+          <button class="danger" onclick="deleteOrder(${item.order_id})">Apagar</button>
+        ` : `
+          <button onclick="editOrder(${item.id}, ${item.order_id})">Editar</button>
+          <button onclick='openUpload(${item.tender.id}, ${item.id}, "Empenho")'>Empenho</button>
+          <button class="primary" onclick="finishOrder(${item.order_id})">Finalizar</button>
+          <button class="danger" onclick="deleteOrder(${item.order_id})">Apagar</button>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+function orderGroupCard(group, finished = false) {
+  const first = group.items[0];
+  const deadline = deliveryStatus(first);
+  const total = group.items.reduce((sum, item) => sum + itemBusinessTotal(item), 0);
+  const allPaid = group.items.every((item) => Number(item.pagamento_recebido || 0));
+  const cls = !finished && deadline.cls === "late" ? "late" : !finished && deadline.cls === "due" ? "due" : "";
+  return `
+    <article class="order-group-card ${finished ? "finished-group" : ""} ${cls}">
+      <header class="order-group-header">
+        <div>
+          <small>${group.items.length > 1 ? "Encomenda agrupada" : "Encomenda"}</small>
+          <h3>Pregão ${first.tender.pregão}</h3>
+          <div class="meta">
+            <span class="tag">UASG ${first.tender.uasg}</span>
+            <span class="tag">${group.items.length} produto${group.items.length === 1 ? "" : "s"}</span>
+            ${finished ? `<span class="tag ${allPaid ? "ok status-adjudicated" : "bad"}">${allPaid ? "Pagamento recebido" : "Pagamento pendente"}</span>` : ""}
+          </div>
+        </div>
+        <div class="order-group-total"><small>${finished ? "Total entregue" : "Total da encomenda"}</small><strong>${money(total)}</strong></div>
+      </header>
+      <div class="order-group-shared">
+        ${deliveryDeadlineBlock(first)}
+        <div class="address-text"><small>Endereço de entrega</small><span>${first.endereço_entrega || "Sem endereço registrado"}</span></div>
+      </div>
+      <div class="order-group-products">
+        ${group.items.map((item) => orderProductRow(item, finished)).join("")}
+      </div>
+      <footer class="order-group-footer">
+        <span>Encomenda ${String(group.id).slice(-6)}</span>
+        <button onclick="openDetail(${first.tender.id})">${finished ? "Abrir histórico" : "Abrir pregão"}</button>
+      </footer>
+    </article>
+  `;
+}
+
 function renderOrders() {
   const sort = $("#orderSort")?.value || "due";
   let rows = flattenOrders()
@@ -570,22 +640,11 @@ function renderOrders() {
   else if (sort === "status") rows = rows.sort((a, b) => String(a.status_encomenda || "").localeCompare(String(b.status_encomenda || "")));
   else rows = rows.sort((a, b) => (isoDate(a.prazo_entrega) || new Date(8640000000000000)) - (isoDate(b.prazo_entrega) || new Date(8640000000000000)));
   $("#ordersList").classList.toggle("list-mode", state.viewModes.orders === "list");
-  $("#ordersList").innerHTML = sectorSummary(rows) + (rows.map((i) => {
-    const deadline = deliveryStatus(i);
-    const cls = deadline.cls === "late" ? "late" : deadline.cls === "due" ? "due" : "";
-    return `
-      <article class="order-card ${cls}">
-        <header><h3>Item ${i.item || "-"}</h3><span class="tag ${deadline.cls === "late" ? "bad" : deadline.cls === "due" ? "warn" : deadline.cls === "missing" ? "" : "ok"}">${deadline.label}</span></header>
-        ${productIdentity(i)}
-        <div class="value">${itemTotalLabel(i)}</div>
-        ${productFacts(i)}
-        ${deliveryDeadlineBlock(i)}
-        ${productMeta(i, `<span class="tag">Encomenda ${String(i.group_id || i.order_id).slice(-6)}</span>`)}
-        <div class="address-text"><small>Endereço de entrega</small><span>${i.endereço_entrega || "Sem endereço de entrega"}</span></div>
-        <div class="actions"><button onclick="openDetail(${i.tender.id})">Abrir</button><button onclick="editOrder(${i.id}, ${i.order_id})">Editar</button><button onclick='openUpload(${i.tender.id}, ${i.id}, "Empenho")'>Empenho</button><button class="primary" onclick="finishOrder(${i.order_id})">Finalizar</button><button class="danger" onclick="deleteOrder(${i.order_id})">Apagar</button></div>
-      </article>
-    `;
-  }).join("") || `<div class="card">Nenhuma encomenda cadastrada ainda.</div>`);
+  const groups = groupOrderRows(rows);
+  $("#ordersList").innerHTML = sectorSummary(rows) + (
+    groups.map((group) => orderGroupCard(group)).join("")
+    || `<div class="card">Nenhuma encomenda cadastrada ainda.</div>`
+  );
 }
 
 function renderFinished() {
@@ -597,24 +656,11 @@ function renderFinished() {
   else if (sort === "pregao") rows = rows.sort((a, b) => String(a.tender.pregão).localeCompare(String(b.tender.pregão)));
   else rows = rows.sort((a, b) => String(b.prazo_entrega || b.tender.data_limite || "").localeCompare(String(a.prazo_entrega || a.tender.data_limite || "")));
   $("#finishedList").classList.toggle("list-mode", state.viewModes.finished === "list");
-  $("#finishedList").innerHTML = sectorSummary(rows, "Total entregue") + (rows.map((i) => `
-    <article class="product-card finished-card">
-      <header><h3>Item ${i.item || "-"}</h3><span class="tag ok">Finalizado</span></header>
-      <div class="finished-title">
-        <strong>${i.marca || "-"}</strong>
-        <span>${i.modelo || i.referência || "-"}</span>
-      </div>
-      <div class="value">${itemTotalLabel(i)}</div>
-      <div class="finished-facts">
-        <span><small>${i.order_id && numberValue(i.qtd_empenhada) > 0 ? "Qtd empenhada" : "Qtd"}</small><strong>${displayQty(i) || 0}</strong></span>
-        <span><small>Unitário</small><strong>${unitValueLabel(i)}</strong></span>
-        <span><small>Total</small><strong>${Number(i.valor_sigiloso || 0) && !numberValue(i.valor_ganho) ? "Sigiloso" : money(displayQty(i) * itemValue(i))}</strong></span>
-      </div>
-      ${productMeta(i, `<span class="tag">Entrega ${brDate(i.prazo_entrega)}</span><span class="tag">Encomenda ${String(i.group_id || i.order_id).slice(-6)}</span><span class="tag ${Number(i.pagamento_recebido || 0) ? "ok status-adjudicated" : "bad"}">${Number(i.pagamento_recebido || 0) ? "Pago" : "Pagamento pendente"}</span>`)}
-      <div class="address-text"><small>Endereço de entrega</small><span>${i.endereço_entrega || "Sem endereço registrado"}</span></div>
-      <div class="actions"><button onclick="openDetail(${i.tender.id})">Abrir histórico</button><button onclick="togglePayment(${i.order_id}, ${Number(i.pagamento_recebido || 0) ? 0 : 1})">${Number(i.pagamento_recebido || 0) ? "Marcar não pago" : "Confirmar pagamento"}</button><button class="danger" onclick="deleteOrder(${i.order_id})">Apagar</button></div>
-    </article>
-  `).join("") || `<div class="card">Nenhum item finalizado ainda.</div>`);
+  const groups = groupOrderRows(rows);
+  $("#finishedList").innerHTML = sectorSummary(rows, "Total entregue") + (
+    groups.map((group) => orderGroupCard(group, true)).join("")
+    || `<div class="card">Nenhum item finalizado ainda.</div>`
+  );
 }
 
 async function openDetail(id) {
@@ -1242,6 +1288,10 @@ function openBulkOrder() {
   const ids = $$(".won-order-select:checked").map((box) => Number(box.value));
   if (!ids.length) return;
   const items = flattenItems().filter((item) => ids.includes(Number(item.id)));
+  if (new Set(items.map((item) => Number(item.tender.id))).size > 1) {
+    alert("Selecione apenas produtos do mesmo pregão para criar uma encomenda agrupada.");
+    return;
+  }
   state.orderItemIds = ids;
   fillForm($("#orderForm"), { status: "Pendente" });
   $("#singleOrderQuantity").hidden = true;
