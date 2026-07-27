@@ -569,6 +569,62 @@ body.dark .alert-card {
   margin-top: 12px;
   justify-content: flex-start;
 }
+.dashboard-order-title {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+}
+.dashboard-order-title > div {
+  display: grid;
+  gap: 3px;
+}
+.dashboard-order-title > div:last-child {
+  text-align: right;
+}
+.dashboard-order-title small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.dashboard-order-title strong {
+  font-size: 18px;
+}
+.dashboard-order-products {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-2), transparent 12%);
+}
+.dashboard-order-products > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.dashboard-order-products > div:last-child { border-bottom: 0; }
+.dashboard-order-products > div > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dashboard-order-products > div > span:last-child {
+  color: var(--muted);
+  font-weight: 700;
+  white-space: nowrap;
+}
+body.dark .dashboard-order-products {
+  background: #0d181e;
+  border-color: #3d5661;
+}
+body.dark .dashboard-order-products > div { border-color: #304650; }
 
 .card, .product-card, .order-card { padding: 16px; }
 .card-head { display: flex; justify-content: space-between; gap: 16px; align-items: start; }
@@ -1624,6 +1680,13 @@ footer { display: flex; justify-content: end; gap: 8px; margin-top: 4px; }
     justify-content: flex-start;
   }
   .product-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-order-title,
+  .dashboard-order-products > div {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .dashboard-order-title > div:last-child { text-align: left; }
+  .dashboard-order-products > div > span:last-child { white-space: normal; }
   .order-group-header,
   .order-group-footer {
     align-items: stretch;

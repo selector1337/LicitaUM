@@ -341,14 +341,14 @@ function renderDashboard() {
     .filter((t) => isoDate(t.data_limite) && isoDate(t.data_limite) >= now)
     .sort((a, b) => isoDate(a.data_limite) - isoDate(b.data_limite));
   const orders = allOrders.filter((i) => i.status_encomenda !== "Entregue");
-  const riskyOrders = orders
+  const riskyOrders = groupOrderRows(orders
     .filter((i) => isoDate(i.prazo_entrega))
     .sort((a, b) => isoDate(a.prazo_entrega) - isoDate(b.prazo_entrega))
-    .filter((i) => isoDate(i.prazo_entrega) < now)
+    .filter((i) => isoDate(i.prazo_entrega) < now))
     .slice(0, 5);
-  const upcomingOrders = orders
+  const upcomingOrders = groupOrderRows(orders
     .filter((i) => isoDate(i.prazo_entrega) && isoDate(i.prazo_entrega) >= now)
-    .sort((a, b) => isoDate(a.prazo_entrega) - isoDate(b.prazo_entrega))
+    .sort((a, b) => isoDate(a.prazo_entrega) - isoDate(b.prazo_entrega)))
     .slice(0, 5);
   const inSelectedMonth = (item, dateField = "tender") => {
     if (!selectedMonth) return true;
@@ -422,17 +422,32 @@ function alertTender(t) {
   `;
 }
 
-function orderAlert(item) {
+function orderAlert(group) {
+  const item = group.items[0];
   const due = isoDate(item.prazo_entrega);
   const diff = due ? Math.ceil((due - appNow()) / 86400000) : 999;
   const cls = diff < 0 ? "danger" : diff <= 15 ? "warn" : "ok";
   const label = diff < 0 ? `Vencida há ${Math.abs(diff)} dias` : `Vence em ${diff} dias`;
+  const total = group.items.reduce((sum, current) => sum + itemBusinessTotal(current), 0);
   return `
-    <article class="alert-card ${cls}">
+    <article class="alert-card dashboard-order-alert ${cls}">
       <div class="alert-head"><strong>${label}</strong><span>${brDate(item.prazo_entrega)}</span></div>
-      <p>${item.marca || ""} ${item.modelo || ""}</p>
-      <div class="meta"><span class="tag">Pregão ${item.tender.pregão}</span><span class="tag">UASG ${item.tender.uasg}</span></div>
-      ${productFacts(item)}
+      <div class="dashboard-order-title">
+        <div>
+          <small>${group.items.length > 1 ? "Encomenda agrupada" : "Encomenda"}</small>
+          <strong>Pregão ${item.tender.pregão}</strong>
+        </div>
+        <div><small>Total</small><strong>${money(total)}</strong></div>
+      </div>
+      <div class="meta"><span class="tag">UASG ${item.tender.uasg}</span><span class="tag">${group.items.length} produto${group.items.length === 1 ? "" : "s"}</span></div>
+      <div class="dashboard-order-products">
+        ${group.items.map((current) => `
+          <div>
+            <span><b>Item ${current.item || "-"}</b> ${current.marca || ""} ${current.modelo || current.referência || ""}</span>
+            <span>Qtd ${displayQty(current)} · ${money(itemBusinessTotal(current))}</span>
+          </div>
+        `).join("")}
+      </div>
       <div class="actions"><button onclick="openDetail(${item.tender.id})">Abrir</button></div>
     </article>
   `;
