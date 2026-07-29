@@ -39,6 +39,7 @@ def current_business_date() -> date:
 STATUS = [
     "Em cadastro de preços",
     "Futura licitação",
+    "Licitação passada",
     "Proposta enviada",
     "Julgado e Habilitado",
     "Aguardando Habilitação",
@@ -315,6 +316,10 @@ def ensure_schema() -> None:
             con.execute("ALTER TABLE orders ADD COLUMN qtd_empenhada REAL")
         if "group_id" not in order_cols:
             con.execute("ALTER TABLE orders ADD COLUMN group_id TEXT")
+        if "origem" not in order_cols:
+            con.execute("ALTER TABLE orders ADD COLUMN origem TEXT NOT NULL DEFAULT 'Empenho'")
+        if "órgão_solicitante" not in order_cols:
+            con.execute("ALTER TABLE orders ADD COLUMN órgão_solicitante TEXT")
         con.execute(
             """
             UPDATE orders
@@ -380,8 +385,24 @@ def ensure_schema() -> None:
             )
 
 
+def refresh_past_tenders(con: sqlite3.Connection) -> None:
+    now = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y-%m-%dT%H:%M")
+    con.execute(
+        """
+        UPDATE tenders
+        SET status = 'Licitação passada'
+        WHERE status = 'Futura licitação'
+          AND data_limite IS NOT NULL
+          AND data_limite != ''
+          AND datetime(data_limite) < datetime(?)
+        """,
+        (now,),
+    )
+
+
 def all_tenders(query: str = "", status: str = "") -> list[dict]:
     with connect() as con:
+        refresh_past_tenders(con)
         sql = """
             SELECT t.*,
                    COUNT(i.id) AS itens,
@@ -487,7 +508,11 @@ def items_with_orders(con: sqlite3.Connection, tender_id: int | None = None) -> 
         item["orders"].append(order)
 
     for item in items:
-        committed = sum(money(order.get("qtd_empenhada")) for order in item["orders"])
+        committed = sum(
+            money(order.get("qtd_empenhada"))
+            for order in item["orders"]
+            if order.get("origem") != "Carona"
+        )
         won = money(item.get("qtd"))
         item["qtd_empenhada_total"] = float(committed)
         item["qtd_pendente"] = float(max(won - committed, Decimal("0")))
@@ -679,31 +704,43 @@ def save_item(data: dict) -> int:
 
 
 def save_order_in_connection(con: sqlite3.Connection, data: dict, group_id: str | None = None) -> int:
-    fields = ["item_id", "qtd_empenhada", "prazo_entrega", "ordem_fornecimento", "endereço_entrega", "nota_empenho", "status", "pagamento_recebido", "observação", "group_id"]
+    fields = ["item_id", "qtd_empenhada", "prazo_entrega", "ordem_fornecimento", "endereço_entrega", "nota_empenho", "status", "pagamento_recebido", "observação", "group_id", "origem", "órgão_solicitante"]
     values = {key: data.get(key, "") for key in fields}
     quantity = money(values["qtd_empenhada"])
     if quantity <= 0:
         raise ValueError("A quantidade empenhada deve ser maior que zero.")
     values["qtd_empenhada"] = float(quantity)
     values["status"] = values["status"] or "Pendente"
+    values["origem"] = values["origem"] or "Empenho"
     values["pagamento_recebido"] = 1 if str(values["pagamento_recebido"]).lower() in ("1", "true", "on", "sim") else 0
     order_id = int(data["id"]) if data.get("id") else None
     item = con.execute("SELECT qtd FROM items WHERE id = ?", (values["item_id"],)).fetchone()
     if not item:
         raise ValueError("Item não encontrado.")
     committed = con.execute(
-        "SELECT COALESCE(SUM(qtd_empenhada), 0) FROM orders WHERE item_id = ? AND id != COALESCE(?, -1)",
+        """
+        SELECT COALESCE(SUM(qtd_empenhada), 0)
+        FROM orders
+        WHERE item_id = ?
+          AND id != COALESCE(?, -1)
+          AND COALESCE(origem, 'Empenho') != 'Carona'
+        """,
         (values["item_id"], order_id),
     ).fetchone()[0]
     available = money(item["qtd"]) - money(committed)
-    if quantity > available:
+    if values["origem"] != "Carona" and quantity > available:
         raise ValueError(f"Quantidade superior ao saldo disponível ({available}).")
 
     if order_id:
-        existing = con.execute("SELECT group_id FROM orders WHERE id = ?", (order_id,)).fetchone()
+        existing = con.execute(
+            "SELECT group_id, origem, órgão_solicitante FROM orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
         if not existing:
             raise ValueError("Encomenda não encontrada.")
         values["group_id"] = group_id or values["group_id"] or existing["group_id"] or f"order-{order_id}"
+        values["origem"] = data.get("origem") or existing["origem"] or "Empenho"
+        values["órgão_solicitante"] = data.get("órgão_solicitante") or existing["órgão_solicitante"] or ""
         sets = ", ".join(f"{field} = ?" for field in fields)
         con.execute(
             f"UPDATE orders SET {sets} WHERE id = ?",
@@ -730,7 +767,7 @@ def save_orders_bulk(data: dict) -> list[int]:
         raise ValueError("Selecione ao menos um item.")
     common = {
         key: data.get(key, "")
-        for key in ("prazo_entrega", "ordem_fornecimento", "endereço_entrega", "nota_empenho", "status", "pagamento_recebido", "observação")
+        for key in ("prazo_entrega", "ordem_fornecimento", "endereço_entrega", "nota_empenho", "status", "pagamento_recebido", "observação", "origem", "órgão_solicitante")
     }
     group_id = uuid.uuid4().hex
     ids = []

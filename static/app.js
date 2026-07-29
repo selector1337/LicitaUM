@@ -17,6 +17,7 @@ const state = {
   observationItemId: null,
   proposalItemId: null,
   orderItemIds: [],
+  caronaItemIds: [],
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -284,6 +285,8 @@ function flattenOrders() {
     status_encomenda: order.status,
     pagamento_recebido: order.pagamento_recebido,
     observação_encomenda: order.observação,
+    origem_encomenda: order.origem || "Empenho",
+    órgão_solicitante: order.órgão_solicitante || "",
   })));
 }
 
@@ -367,21 +370,26 @@ function renderDashboard() {
     .reduce((sum, item) => sum + itemBusinessTotal(item), 0);
 
   $("#dashboard").innerHTML = `
-    <div class="dashboard-filter">
-      <label>Filtrar valores
-        <select id="dashboardMonth">
-          <option value="" ${selectedMonth === "" ? "selected" : ""}>Todos os meses</option>
-          ${monthOptions.map((option) => `<option value="${option}" ${selectedMonth === option ? "selected" : ""}>${monthLabel(option)}</option>`).join("")}
-        </select>
-      </label>
-    </div>
-    <div class="metrics">
+    <div class="metrics operational-metrics">
       <div class="metric"><span>Próximas licitações</span><strong>${future.length}</strong></div>
       <div class="metric countdown-metric"><span>Próxima licitação em</span><strong class="countdown" data-deadline="${future[0]?.data_limite || ""}">${countdownLabel(future[0]?.data_limite)}</strong></div>
-      <div class="metric"><span>Valor ganho</span><strong>${money(valorGanho)}</strong></div>
-      <div class="metric"><span>Valor empenhado</span><strong>${money(valorEmpenhado)}</strong></div>
-      <div class="metric"><span>Valor pago</span><strong>${money(valorPago)}</strong></div>
     </div>
+    <section class="financial-overview">
+      <header>
+        <div><small>Resumo financeiro</small><strong>${monthLabel(selectedMonth)}</strong></div>
+        <label>Período
+          <select id="dashboardMonth">
+            <option value="" ${selectedMonth === "" ? "selected" : ""}>Todos os meses</option>
+            ${monthOptions.map((option) => `<option value="${option}" ${selectedMonth === option ? "selected" : ""}>${monthLabel(option)}</option>`).join("")}
+          </select>
+        </label>
+      </header>
+      <div class="financial-metrics">
+        <div class="metric"><span>Valor ganho</span><strong>${money(valorGanho)}</strong></div>
+        <div class="metric"><span>Valor empenhado</span><strong>${money(valorEmpenhado)}</strong></div>
+        <div class="metric"><span>Valor pago</span><strong>${money(valorPago)}</strong></div>
+      </div>
+    </section>
     <div class="dashboard-grid">
       <div class="alert-stack">
         <h2>Próximas licitações</h2>
@@ -424,6 +432,7 @@ function alertTender(t) {
 
 function orderAlert(group) {
   const item = group.items[0];
+  const isCarona = item.origem_encomenda === "Carona";
   const due = isoDate(item.prazo_entrega);
   const diff = due ? Math.ceil((due - appNow()) / 86400000) : 999;
   const cls = diff < 0 ? "danger" : diff <= 15 ? "warn" : "ok";
@@ -434,12 +443,12 @@ function orderAlert(group) {
       <div class="alert-head"><strong>${label}</strong><span>${brDate(item.prazo_entrega)}</span></div>
       <div class="dashboard-order-title">
         <div>
-          <small>${group.items.length > 1 ? "Encomenda agrupada" : "Encomenda"}</small>
-          <strong>Pregão ${item.tender.pregão}</strong>
+          <small>${isCarona ? "Carona" : group.items.length > 1 ? "Encomenda agrupada" : "Encomenda"}</small>
+          <strong>${isCarona ? (item.órgão_solicitante || "Órgão solicitante") : `Pregão ${item.tender.pregão}`}</strong>
         </div>
         <div><small>Total</small><strong>${money(total)}</strong></div>
       </div>
-      <div class="meta"><span class="tag">UASG ${item.tender.uasg}</span><span class="tag">${group.items.length} produto${group.items.length === 1 ? "" : "s"}</span></div>
+      <div class="meta">${isCarona ? `<span class="tag">Referência: Pregão ${item.tender.pregão}</span>` : ""}<span class="tag">UASG ${item.tender.uasg}</span><span class="tag">${group.items.length} produto${group.items.length === 1 ? "" : "s"}</span></div>
       <div class="dashboard-order-products">
         ${group.items.map((current) => `
           <div>
@@ -585,12 +594,35 @@ function groupOrderRows(rows) {
   return [...groups.entries()].map(([id, items]) => ({ id, items }));
 }
 
+function orderGroupTotal(group) {
+  return group.items.reduce((sum, item) => sum + itemBusinessTotal(item), 0);
+}
+
+function orderGroupFilterMatch(group, searchSelector, minSelector) {
+  const q = ($(searchSelector)?.value || "").toLowerCase().trim();
+  const min = numberValue($(minSelector)?.value || "");
+  const haystack = group.items.map((item) => (
+    `${item.item || ""} ${item.marca || ""} ${item.modelo || ""} ${item.referência || ""} ${item.tender.pregão || ""} ${item.tender.uasg || ""} ${item.tender.órgão || ""} ${item.órgão_solicitante || ""}`
+  )).join(" ").toLowerCase();
+  return (!q || haystack.includes(q)) && (!min || orderGroupTotal(group) >= min);
+}
+
+function completedDeliveryBlock(item) {
+  return `
+    <div class="delivery-deadline completed">
+      <div><small>Entrega concluída</small><strong>${brDate(item.prazo_entrega)}</strong></div>
+      <span>Finalizada</span>
+      <p>Prazo registrado no histórico da encomenda.</p>
+    </div>
+  `;
+}
+
 function orderProductRow(item, finished = false) {
   const paid = Number(item.pagamento_recebido || 0);
   return `
     <div class="order-group-product">
       <div class="order-product-identity">
-        <span>Item ${item.item || "-"}</span>
+        <span>${item.origem_encomenda === "Carona" ? `Pregão ${item.tender.pregão} · ` : ""}Item ${item.item || "-"}</span>
         <strong>${item.marca || "-"} · ${item.modelo || item.referência || "-"}</strong>
       </div>
       ${productFacts(item)}
@@ -613,16 +645,18 @@ function orderProductRow(item, finished = false) {
 function orderGroupCard(group, finished = false) {
   const first = group.items[0];
   const deadline = deliveryStatus(first);
-  const total = group.items.reduce((sum, item) => sum + itemBusinessTotal(item), 0);
+  const total = orderGroupTotal(group);
   const allPaid = group.items.every((item) => Number(item.pagamento_recebido || 0));
+  const isCarona = first.origem_encomenda === "Carona";
   const cls = !finished && deadline.cls === "late" ? "late" : !finished && deadline.cls === "due" ? "due" : "";
   return `
     <article class="order-group-card ${finished ? "finished-group" : ""} ${cls}">
       <header class="order-group-header">
         <div>
-          <small>${group.items.length > 1 ? "Encomenda agrupada" : "Encomenda"}</small>
-          <h3>Pregão ${first.tender.pregão}</h3>
+          <small>${isCarona ? "Carona" : group.items.length > 1 ? "Encomenda agrupada" : "Encomenda"}</small>
+          <h3>${isCarona ? (first.órgão_solicitante || "Órgão solicitante") : `Pregão ${first.tender.pregão}`}</h3>
           <div class="meta">
+            ${isCarona ? `<span class="tag">Referência: Pregão ${first.tender.pregão}</span>` : ""}
             <span class="tag">UASG ${first.tender.uasg}</span>
             <span class="tag">${group.items.length} produto${group.items.length === 1 ? "" : "s"}</span>
             ${finished ? `<span class="tag ${allPaid ? "ok status-adjudicated" : "bad"}">${allPaid ? "Pagamento recebido" : "Pagamento pendente"}</span>` : ""}
@@ -631,14 +665,14 @@ function orderGroupCard(group, finished = false) {
         <div class="order-group-total"><small>${finished ? "Total entregue" : "Total da encomenda"}</small><strong>${money(total)}</strong></div>
       </header>
       <div class="order-group-shared">
-        ${deliveryDeadlineBlock(first)}
+        ${finished ? completedDeliveryBlock(first) : deliveryDeadlineBlock(first)}
         <div class="address-text"><small>Endereço de entrega</small><span>${first.endereço_entrega || "Sem endereço registrado"}</span></div>
       </div>
       <div class="order-group-products">
         ${group.items.map((item) => orderProductRow(item, finished)).join("")}
       </div>
       <footer class="order-group-footer">
-        <span>Encomenda ${String(group.id).slice(-6)}</span>
+        <span>${isCarona ? "Carona" : "Encomenda"} ${String(group.id).slice(-6)}</span>
         <button onclick="openDetail(${first.tender.id})">${finished ? "Abrir histórico" : "Abrir pregão"}</button>
       </footer>
     </article>
@@ -647,15 +681,14 @@ function orderGroupCard(group, finished = false) {
 
 function renderOrders() {
   const sort = $("#orderSort")?.value || "due";
-  let rows = flattenOrders()
-    .filter((i) => i.status_encomenda !== "Entregue")
-    .filter((i) => itemFilterMatch(i, "#orderSearch", "#orderMinValue"));
-  if (sort === "value_desc") rows = rows.sort((a, b) => itemBusinessTotal(b) - itemBusinessTotal(a));
-  else if (sort === "value_asc") rows = rows.sort((a, b) => itemBusinessTotal(a) - itemBusinessTotal(b));
-  else if (sort === "status") rows = rows.sort((a, b) => String(a.status_encomenda || "").localeCompare(String(b.status_encomenda || "")));
-  else rows = rows.sort((a, b) => (isoDate(a.prazo_entrega) || new Date(8640000000000000)) - (isoDate(b.prazo_entrega) || new Date(8640000000000000)));
+  let groups = groupOrderRows(flattenOrders().filter((i) => i.status_encomenda !== "Entregue"))
+    .filter((group) => orderGroupFilterMatch(group, "#orderSearch", "#orderMinValue"));
+  if (sort === "value_desc") groups.sort((a, b) => orderGroupTotal(b) - orderGroupTotal(a));
+  else if (sort === "value_asc") groups.sort((a, b) => orderGroupTotal(a) - orderGroupTotal(b));
+  else if (sort === "status") groups.sort((a, b) => String(a.items[0].status_encomenda || "").localeCompare(String(b.items[0].status_encomenda || "")));
+  else groups.sort((a, b) => (isoDate(a.items[0].prazo_entrega) || new Date(8640000000000000)) - (isoDate(b.items[0].prazo_entrega) || new Date(8640000000000000)));
+  const rows = groups.flatMap((group) => group.items);
   $("#ordersList").classList.toggle("list-mode", state.viewModes.orders === "list");
-  const groups = groupOrderRows(rows);
   $("#ordersList").innerHTML = sectorSummary(rows) + (
     groups.map((group) => orderGroupCard(group)).join("")
     || `<div class="card">Nenhuma encomenda cadastrada ainda.</div>`
@@ -664,14 +697,17 @@ function renderOrders() {
 
 function renderFinished() {
   const sort = $("#finishedSort")?.value || "recent";
-  let rows = flattenOrders()
-    .filter((i) => i.status_encomenda === "Entregue")
-    .filter((i) => itemFilterMatch(i, "#finishedSearch", "#finishedMinValue"));
-  if (sort === "value") rows = rows.sort((a, b) => itemBusinessTotal(b) - itemBusinessTotal(a));
-  else if (sort === "pregao") rows = rows.sort((a, b) => String(a.tender.pregão).localeCompare(String(b.tender.pregão)));
-  else rows = rows.sort((a, b) => String(b.prazo_entrega || b.tender.data_limite || "").localeCompare(String(a.prazo_entrega || a.tender.data_limite || "")));
+  const payment = $("#finishedPayment")?.value || "";
+  let groups = groupOrderRows(flattenOrders().filter((i) => i.status_encomenda === "Entregue"))
+    .filter((group) => orderGroupFilterMatch(group, "#finishedSearch", "#finishedMinValue"))
+    .filter((group) => payment !== "paid" || group.items.every((item) => Number(item.pagamento_recebido || 0)))
+    .filter((group) => payment !== "pending" || group.items.some((item) => !Number(item.pagamento_recebido || 0)));
+  if (sort === "value_desc") groups.sort((a, b) => orderGroupTotal(b) - orderGroupTotal(a));
+  else if (sort === "value_asc") groups.sort((a, b) => orderGroupTotal(a) - orderGroupTotal(b));
+  else if (sort === "pregao") groups.sort((a, b) => String(a.items[0].tender.pregão).localeCompare(String(b.items[0].tender.pregão)));
+  else groups.sort((a, b) => String(b.items[0].prazo_entrega || b.items[0].tender.data_limite || "").localeCompare(String(a.items[0].prazo_entrega || a.items[0].tender.data_limite || "")));
+  const rows = groups.flatMap((group) => group.items);
   $("#finishedList").classList.toggle("list-mode", state.viewModes.finished === "list");
-  const groups = groupOrderRows(rows);
   $("#finishedList").innerHTML = sectorSummary(rows, "Total entregue") + (
     groups.map((group) => orderGroupCard(group, true)).join("")
     || `<div class="card">Nenhum item finalizado ainda.</div>`
@@ -1184,6 +1220,8 @@ async function finishOrder(orderId) {
     body: JSON.stringify({
       id: item.order_id,
       item_id: item.id,
+      origem: item.origem_encomenda || "Empenho",
+      órgão_solicitante: item.órgão_solicitante || "",
       qtd_empenhada: item.qtd_empenhada || item.qtd || "",
       prazo_entrega: item.prazo_entrega,
       ordem_fornecimento: item.ordem_fornecimento,
@@ -1204,6 +1242,8 @@ async function togglePayment(orderId, paid) {
     body: JSON.stringify({
       id: item.order_id,
       item_id: item.id,
+      origem: item.origem_encomenda || "Empenho",
+      órgão_solicitante: item.órgão_solicitante || "",
       qtd_empenhada: item.qtd_empenhada || item.qtd || "",
       prazo_entrega: item.prazo_entrega,
       ordem_fornecimento: item.ordem_fornecimento,
@@ -1324,6 +1364,69 @@ function openBulkOrder() {
   $("#orderDialog").showModal();
 }
 
+function eligibleCaronaItems() {
+  return flattenItems()
+    .filter((item) => WIN_STATUSES.includes(item.status))
+    .filter((item) => itemValue(item) > 0)
+    .sort((a, b) => String(a.tender.pregão || "").localeCompare(String(b.tender.pregão || "")) || Number(a.item || 0) - Number(b.item || 0));
+}
+
+function openCaronaDialog() {
+  const items = eligibleCaronaItems();
+  if (!items.length) return alert("Nenhum item ganho com valor disponível para cadastrar uma Carona.");
+  state.caronaItemIds = [];
+  $("#caronaForm").reset();
+  $("#caronaItemSelect").innerHTML = items.map((item) => `
+    <option value="${item.id}">Pregão ${item.tender.pregão} · Item ${item.item || "-"} · ${item.marca || ""} ${item.modelo || item.referência || ""} · ${money(itemValue(item))}</option>
+  `).join("");
+  renderCaronaItems();
+  $("#caronaDialog").showModal();
+}
+
+function addCaronaItem() {
+  const id = Number($("#caronaItemSelect").value);
+  if (!id || state.caronaItemIds.includes(id)) return;
+  state.caronaItemIds.push(id);
+  renderCaronaItems();
+}
+
+function removeCaronaItem(id) {
+  state.caronaItemIds = state.caronaItemIds.filter((itemId) => Number(itemId) !== Number(id));
+  renderCaronaItems();
+}
+
+function renderCaronaItems() {
+  const items = eligibleCaronaItems().filter((item) => state.caronaItemIds.includes(Number(item.id)));
+  $("#caronaItemsFields").innerHTML = items.length ? items.map((item) => `
+    <div class="carona-item-row">
+      <div>
+        <strong>Item ${item.item || "-"} · ${item.marca || "-"} ${item.modelo || item.referência || ""}</strong>
+        <span>Pregão ${item.tender.pregão} · UASG ${item.tender.uasg} · Unitário ${money(itemValue(item))}</span>
+      </div>
+      <label>Quantidade <input data-carona-item="${item.id}" type="number" min="0.01" step="0.01" value="1" required /></label>
+      <button type="button" class="danger" onclick="removeCaronaItem(${item.id})">Remover</button>
+    </div>
+  `).join("") : `<div class="empty-selection">Adicione um ou mais produtos ganhos para compor a Carona.</div>`;
+}
+
+async function saveCarona(event) {
+  event.preventDefault();
+  const itemInputs = $$("#caronaItemsFields [data-carona-item]");
+  if (!itemInputs.length) return alert("Adicione pelo menos um produto à Carona.");
+  const data = formData(event.target);
+  data.origem = "Carona";
+  data.status = "Pendente";
+  data.items = itemInputs.map((input) => ({
+    item_id: Number(input.dataset.caronaItem),
+    qtd_empenhada: input.value,
+  }));
+  await api("/api/orders/bulk", { method: "POST", body: JSON.stringify(data) });
+  state.caronaItemIds = [];
+  $("#caronaDialog").close();
+  await load();
+  showView("orders");
+}
+
 function editOrder(itemId, orderId = null) {
   state.orderItemIds = [];
   const item = orderId
@@ -1335,6 +1438,8 @@ function editOrder(itemId, orderId = null) {
   fillForm($("#orderForm"), {
     id: orderId || "",
     item_id: item.id,
+    origem: item.origem_encomenda || "Empenho",
+    órgão_solicitante: item.órgão_solicitante || "",
     qtd_empenhada: orderId ? item.qtd_empenhada : available,
     prazo_entrega: item.prazo_entrega,
     ordem_fornecimento: item.ordem_fornecimento,
@@ -1628,6 +1733,7 @@ async function boot() {
   $("#finishedSearch").addEventListener("input", renderFinished);
   $("#finishedMinValue").addEventListener("input", renderFinished);
   $("#finishedSort").addEventListener("change", renderFinished);
+  $("#finishedPayment").addEventListener("change", renderFinished);
   $$(".view-toggle button").forEach((button) => {
     button.addEventListener("click", () => {
       const target = button.closest(".view-toggle").dataset.target;
@@ -1663,6 +1769,7 @@ async function boot() {
     await load();
     if (state.current) await openDetail(state.current.id);
   });
+  $("#caronaForm").addEventListener("submit", saveCarona);
   $("#uploadForm").addEventListener("submit", uploadFile);
   $("#userForm").addEventListener("submit", saveUser);
   $("#observationForm").addEventListener("submit", saveObservation);

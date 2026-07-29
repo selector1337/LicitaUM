@@ -148,6 +148,7 @@
           <div>
             <h2>Encomendas</h2>
             <p>Ordenado por padrão pelo que vai vencer primeiro.</p>
+            <button type="button" class="primary section-action" onclick="openCaronaDialog()">Cadastrar Carona</button>
           </div>
           <div class="filter-stack">
             <input id="orderSearch" placeholder="Filtrar por produto, pregão, UASG..." />
@@ -175,8 +176,14 @@
             <input id="finishedMinValue" inputmode="decimal" placeholder="Valor mínimo" />
             <select id="finishedSort">
               <option value="recent">Mais recentes</option>
-              <option value="value">Maior valor</option>
+              <option value="value_desc">Valor decrescente</option>
+              <option value="value_asc">Valor crescente</option>
               <option value="pregao">Pregão</option>
+            </select>
+            <select id="finishedPayment">
+              <option value="">Todos os pagamentos</option>
+              <option value="paid">Pagos</option>
+              <option value="pending">Não pagos</option>
             </select>
             <div class="view-toggle" data-target="finished"><button data-mode="grid">Grid</button><button data-mode="list">Lista</button></div>
           </div>
@@ -265,6 +272,8 @@
         <p id="orderDialogSubtitle" class="dialog-subtitle"></p>
         <input type="hidden" name="id" />
         <input type="hidden" name="item_id" />
+        <input type="hidden" name="origem" />
+        <input type="hidden" name="órgão_solicitante" />
         <div id="orderItemsFields" class="order-items-fields"></div>
         <div class="grid3">
           <label id="singleOrderQuantity">Qtd empenhada <input name="qtd_empenhada" type="number" min="0.01" step="0.01" required /></label>
@@ -280,6 +289,35 @@
         <footer>
           <button type="button" data-close>Cancelar</button>
           <button class="primary">Salvar</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="caronaDialog">
+      <form method="dialog" id="caronaForm">
+        <button type="button" class="dialog-close" data-close aria-label="Fechar">×</button>
+        <h2>Cadastrar Carona</h2>
+        <p class="dialog-subtitle">Use produtos e valores já ganhos para registrar o fornecimento solicitado por outro órgão.</p>
+        <div class="carona-picker">
+          <label>Produto de referência
+            <select id="caronaItemSelect"></select>
+          </label>
+          <button type="button" onclick="addCaronaItem()">Adicionar produto</button>
+        </div>
+        <div id="caronaItemsFields" class="order-items-fields"></div>
+        <div class="grid2">
+          <label>Órgão solicitante <input name="órgão_solicitante" required placeholder="Nome do órgão que solicitou a carona" /></label>
+          <label>Prazo para entrega <input name="prazo_entrega" type="date" required /></label>
+        </div>
+        <div class="grid2">
+          <label>Ordem de fornecimento <input name="ordem_fornecimento" /></label>
+          <label>Nota de empenho <input name="nota_empenho" /></label>
+        </div>
+        <label>Endereço de entrega <textarea name="endereço_entrega" required></textarea></label>
+        <label>Observação <textarea name="observação"></textarea></label>
+        <footer>
+          <button type="button" data-close>Cancelar</button>
+          <button class="primary">Cadastrar Carona</button>
         </footer>
       </form>
     </dialog>
