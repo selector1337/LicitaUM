@@ -487,9 +487,24 @@ label { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
   min-height: 39px;
 }
 .metrics { display: grid; gap: 12px; margin-bottom: 14px; }
-.operational-metrics { grid-template-columns: repeat(2, minmax(180px, 280px)); }
-.financial-overview {
+.dashboard-overview {
+  display: grid;
+  grid-template-columns: minmax(500px, .95fr) minmax(0, 2.05fr);
+  gap: 14px;
+  align-items: stretch;
   margin-bottom: 16px;
+}
+.operational-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+.operational-metrics .metric {
+  min-height: 100%;
+  display: grid;
+  align-content: center;
+}
+.financial-overview {
+  margin-bottom: 0;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -522,7 +537,7 @@ label { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
 }
 .financial-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 body.dark .financial-overview {
@@ -823,15 +838,84 @@ body.dark .date-badge {
   gap: 8px;
 }
 .section-action { margin-top: 10px; }
-.carona-picker {
+.carona-product-finder {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: end;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-2), var(--panel) 28%);
+}
+.carona-search-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.carona-search-summary span {
+  color: var(--ink);
+  font-weight: 800;
+}
+.carona-search-results {
+  max-height: 294px;
+  display: grid;
+  gap: 6px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+.carona-search-result {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 58px;
+  padding: 9px 11px;
+  text-align: left;
+  background: var(--panel);
+  border-color: var(--line);
+}
+.carona-search-result:hover {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand), var(--panel) 94%);
+  transform: none;
+}
+.carona-result-product,
+.carona-result-value {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.carona-result-product strong {
+  color: var(--ink);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.carona-result-product small,
+.carona-result-value small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.carona-result-value {
+  min-width: 128px;
+  text-align: right;
+}
+.carona-result-value strong {
+  color: var(--ink);
+}
+.carona-result-add {
+  padding: 7px 10px;
+  border-radius: 9px;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand), transparent 90%);
+  font-size: 12px;
+  font-weight: 900;
 }
 .carona-item-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px auto;
+  grid-template-columns: minmax(0, 1fr) 160px auto;
   gap: 12px;
   align-items: center;
   padding: 12px;
@@ -839,14 +923,36 @@ body.dark .date-badge {
   border-radius: 12px;
   background: var(--panel-2);
 }
-.carona-item-row > div {
+.carona-selected-product {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 5px;
 }
-.carona-item-row > div span {
+.carona-selected-product > small {
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.carona-selected-product > strong {
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.carona-selected-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.carona-selected-meta span {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
   color: var(--muted);
-  font-size: 12px;
+  background: var(--panel);
+  font-size: 11px;
   overflow-wrap: anywhere;
 }
 .empty-selection {
@@ -857,9 +963,19 @@ body.dark .date-badge {
   text-align: center;
 }
 body.dark .carona-item-row,
-body.dark .empty-selection {
+body.dark .empty-selection,
+body.dark .carona-product-finder {
   background: #0d181e;
   border-color: #48616c;
+}
+body.dark .carona-search-result,
+body.dark .carona-selected-meta span {
+  background: #111f26;
+  border-color: #48616c;
+}
+body.dark .carona-search-result:hover {
+  background: #172b35;
+  border-color: var(--brand);
 }
 .order-item-quantity {
   display: grid;
@@ -1730,6 +1846,7 @@ dialog {
   background: transparent;
   width: min(820px, calc(100vw - 24px));
 }
+#caronaDialog { width: min(940px, calc(100vw - 24px)); }
 dialog::backdrop { background: rgba(10, 20, 24, .45); }
 dialog form {
   position: relative;
@@ -1774,6 +1891,10 @@ body.dark dialog label {
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 footer { display: flex; justify-content: end; gap: 8px; margin-top: 4px; }
 
+@media (max-width: 1180px) {
+  .dashboard-overview { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 980px) {
   body { grid-template-columns: 1fr; }
   body:has(.sidebar:hover) { grid-template-columns: 1fr; }
@@ -1785,10 +1906,11 @@ footer { display: flex; justify-content: end; gap: 8px; margin-top: 4px; }
   .topbar, .detail-top, .card-head, .proposal-bar, .bulk-bar, .section-head { display: grid; }
   .top-actions { display: grid; grid-template-columns: 1fr; }
   .account-menu { justify-content: space-between; border-radius: 16px; }
-  .metrics, .financial-metrics, .dashboard-grid, .grid2, .grid3 { grid-template-columns: 1fr; }
+  .dashboard-overview, .metrics, .financial-metrics, .dashboard-grid, .grid2, .grid3 { grid-template-columns: 1fr; }
   .financial-overview > header { align-items: stretch; flex-direction: column; }
   .bulk-order-bar, .order-item-quantity { grid-template-columns: 1fr; display: grid; }
-  .carona-picker, .carona-item-row { grid-template-columns: 1fr; }
+  .carona-search-result, .carona-item-row { grid-template-columns: 1fr; }
+  .carona-result-value { text-align: left; }
   .filter-stack {
     display: grid;
     grid-template-columns: 1fr;

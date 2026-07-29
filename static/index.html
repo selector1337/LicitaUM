@@ -298,11 +298,15 @@
         <button type="button" class="dialog-close" data-close aria-label="Fechar">×</button>
         <h2>Cadastrar Carona</h2>
         <p class="dialog-subtitle">Use produtos e valores já ganhos para registrar o fornecimento solicitado por outro órgão.</p>
-        <div class="carona-picker">
-          <label>Produto de referência
-            <select id="caronaItemSelect"></select>
+        <div class="carona-product-finder">
+          <label>Buscar produto de referência
+            <input id="caronaProductSearch" type="search" autocomplete="off" placeholder="Digite marca, modelo, produto, pregão ou UASG" />
           </label>
-          <button type="button" onclick="addCaronaItem()">Adicionar produto</button>
+          <div class="carona-search-summary">
+            <span id="caronaSearchCount"></span>
+            <small>Clique em um resultado para adicionar à Carona.</small>
+          </div>
+          <div id="caronaSearchResults" class="carona-search-results"></div>
         </div>
         <div id="caronaItemsFields" class="order-items-fields"></div>
         <div class="grid2">

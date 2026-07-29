@@ -370,26 +370,28 @@ function renderDashboard() {
     .reduce((sum, item) => sum + itemBusinessTotal(item), 0);
 
   $("#dashboard").innerHTML = `
-    <div class="metrics operational-metrics">
-      <div class="metric"><span>Próximas licitações</span><strong>${future.length}</strong></div>
-      <div class="metric countdown-metric"><span>Próxima licitação em</span><strong class="countdown" data-deadline="${future[0]?.data_limite || ""}">${countdownLabel(future[0]?.data_limite)}</strong></div>
-    </div>
-    <section class="financial-overview">
-      <header>
-        <div><small>Resumo financeiro</small><strong>${monthLabel(selectedMonth)}</strong></div>
-        <label>Período
-          <select id="dashboardMonth">
-            <option value="" ${selectedMonth === "" ? "selected" : ""}>Todos os meses</option>
-            ${monthOptions.map((option) => `<option value="${option}" ${selectedMonth === option ? "selected" : ""}>${monthLabel(option)}</option>`).join("")}
-          </select>
-        </label>
-      </header>
-      <div class="financial-metrics">
-        <div class="metric"><span>Valor ganho</span><strong>${money(valorGanho)}</strong></div>
-        <div class="metric"><span>Valor empenhado</span><strong>${money(valorEmpenhado)}</strong></div>
-        <div class="metric"><span>Valor pago</span><strong>${money(valorPago)}</strong></div>
+    <div class="dashboard-overview">
+      <div class="metrics operational-metrics">
+        <div class="metric"><span>Próximas licitações</span><strong>${future.length}</strong></div>
+        <div class="metric countdown-metric"><span>Próxima licitação em</span><strong class="countdown" data-deadline="${future[0]?.data_limite || ""}">${countdownLabel(future[0]?.data_limite)}</strong></div>
       </div>
-    </section>
+      <section class="financial-overview">
+        <header>
+          <div><small>Resumo financeiro</small><strong>${monthLabel(selectedMonth)}</strong></div>
+          <label>Período
+            <select id="dashboardMonth">
+              <option value="" ${selectedMonth === "" ? "selected" : ""}>Todos os meses</option>
+              ${monthOptions.map((option) => `<option value="${option}" ${selectedMonth === option ? "selected" : ""}>${monthLabel(option)}</option>`).join("")}
+            </select>
+          </label>
+        </header>
+        <div class="financial-metrics">
+          <div class="metric"><span>Valor ganho</span><strong>${money(valorGanho)}</strong></div>
+          <div class="metric"><span>Valor empenhado</span><strong>${money(valorEmpenhado)}</strong></div>
+          <div class="metric"><span>Valor pago</span><strong>${money(valorPago)}</strong></div>
+        </div>
+      </section>
+    </div>
     <div class="dashboard-grid">
       <div class="alert-stack">
         <h2>Próximas licitações</h2>
@@ -1376,22 +1378,62 @@ function openCaronaDialog() {
   if (!items.length) return alert("Nenhum item ganho com valor disponível para cadastrar uma Carona.");
   state.caronaItemIds = [];
   $("#caronaForm").reset();
-  $("#caronaItemSelect").innerHTML = items.map((item) => `
-    <option value="${item.id}">Pregão ${item.tender.pregão} · Item ${item.item || "-"} · ${item.marca || ""} ${item.modelo || item.referência || ""} · ${money(itemValue(item))}</option>
-  `).join("");
+  $("#caronaProductSearch").value = "";
+  renderCaronaSearchResults();
   renderCaronaItems();
   $("#caronaDialog").showModal();
+  $("#caronaProductSearch").focus();
 }
 
-function addCaronaItem() {
-  const id = Number($("#caronaItemSelect").value);
+function normalizedSearch(value) {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+function caronaSearchText(item) {
+  return normalizedSearch([
+    item.marca,
+    item.modelo,
+    item.referência,
+    item.item,
+    item.tender.pregão,
+    item.tender.uasg,
+    item.tender.órgão,
+  ].join(" "));
+}
+
+function renderCaronaSearchResults() {
+  const query = normalizedSearch($("#caronaProductSearch")?.value);
+  const available = eligibleCaronaItems()
+    .filter((item) => !state.caronaItemIds.includes(Number(item.id)));
+  const matches = available.filter((item) => !query || caronaSearchText(item).includes(query));
+  const visible = matches.slice(0, query ? 20 : 8);
+  $("#caronaSearchCount").textContent = query
+    ? `${matches.length} produto${matches.length === 1 ? "" : "s"} encontrado${matches.length === 1 ? "" : "s"}`
+    : `${available.length} produtos disponíveis · mostrando os primeiros ${visible.length}`;
+  $("#caronaSearchResults").innerHTML = visible.length ? visible.map((item) => `
+    <button type="button" class="carona-search-result" onclick="addCaronaItem(${item.id})">
+      <span class="carona-result-product">
+        <strong>${item.marca || "-"} · ${item.modelo || item.referência || "-"}</strong>
+        <small>Item ${item.item || "-"} · Pregão ${item.tender.pregão} · UASG ${item.tender.uasg}</small>
+      </span>
+      <span class="carona-result-value"><small>Valor unitário</small><strong>${money(itemValue(item))}</strong></span>
+      <span class="carona-result-add">Adicionar</span>
+    </button>
+  `).join("") : `<div class="empty-selection">Nenhum produto encontrado com esse filtro.</div>`;
+}
+
+function addCaronaItem(itemId) {
+  const id = Number(itemId);
   if (!id || state.caronaItemIds.includes(id)) return;
   state.caronaItemIds.push(id);
+  $("#caronaProductSearch").value = "";
+  renderCaronaSearchResults();
   renderCaronaItems();
 }
 
 function removeCaronaItem(id) {
   state.caronaItemIds = state.caronaItemIds.filter((itemId) => Number(itemId) !== Number(id));
+  renderCaronaSearchResults();
   renderCaronaItems();
 }
 
@@ -1399,9 +1441,15 @@ function renderCaronaItems() {
   const items = eligibleCaronaItems().filter((item) => state.caronaItemIds.includes(Number(item.id)));
   $("#caronaItemsFields").innerHTML = items.length ? items.map((item) => `
     <div class="carona-item-row">
-      <div>
-        <strong>Item ${item.item || "-"} · ${item.marca || "-"} ${item.modelo || item.referência || ""}</strong>
-        <span>Pregão ${item.tender.pregão} · UASG ${item.tender.uasg} · Unitário ${money(itemValue(item))}</span>
+      <div class="carona-selected-product">
+        <small>Produto selecionado</small>
+        <strong>${item.marca || "-"} · ${item.modelo || item.referência || "-"}</strong>
+        <div class="carona-selected-meta">
+          <span>Item ${item.item || "-"}</span>
+          <span>Pregão ${item.tender.pregão}</span>
+          <span>UASG ${item.tender.uasg}</span>
+          <span>Unitário ${money(itemValue(item))}</span>
+        </div>
       </div>
       <label>Quantidade <input data-carona-item="${item.id}" type="number" min="0.01" step="0.01" value="1" required /></label>
       <button type="button" class="danger" onclick="removeCaronaItem(${item.id})">Remover</button>
@@ -1434,6 +1482,7 @@ function editOrder(itemId, orderId = null) {
     : flattenItems().find((candidate) => Number(candidate.id) === Number(itemId));
   if (!item) return;
   const canonical = flattenItems().find((candidate) => Number(candidate.id) === Number(itemId));
+  const isCarona = item.origem_encomenda === "Carona";
   const available = pendingOrderQty(canonical) + (orderId ? numberValue(item.qtd_empenhada) : 0);
   fillForm($("#orderForm"), {
     id: orderId || "",
@@ -1450,10 +1499,14 @@ function editOrder(itemId, orderId = null) {
   });
   $("#singleOrderQuantity").hidden = false;
   $("#orderForm").elements.qtd_empenhada.required = true;
-  $("#orderForm").elements.qtd_empenhada.max = available;
+  if (isCarona) {
+    $("#orderForm").elements.qtd_empenhada.removeAttribute("max");
+  } else {
+    $("#orderForm").elements.qtd_empenhada.max = available;
+  }
   $("#orderItemsFields").innerHTML = "";
   $("#orderDialogSubtitle").textContent = orderId
-    ? `Editando o empenho do item ${item.item || "-"}.`
+    ? `Editando ${isCarona ? "a Carona" : "o empenho"} do item ${item.item || "-"}.`
     : `Saldo disponível do item ${item.item || "-"}: ${available}.`;
   $("#orderDialog").showModal();
 }
@@ -1770,6 +1823,12 @@ async function boot() {
     if (state.current) await openDetail(state.current.id);
   });
   $("#caronaForm").addEventListener("submit", saveCarona);
+  $("#caronaProductSearch").addEventListener("input", renderCaronaSearchResults);
+  $("#caronaProductSearch").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    $("#caronaSearchResults .carona-search-result")?.click();
+  });
   $("#uploadForm").addEventListener("submit", uploadFile);
   $("#userForm").addEventListener("submit", saveUser);
   $("#observationForm").addEventListener("submit", saveObservation);
