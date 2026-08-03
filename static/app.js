@@ -38,14 +38,36 @@ const numberValue = (value) => {
   }
   return Number(text) || 0;
 };
-const isoDate = (value) => value ? new Date(value) : null;
+const escapeHtml = (value) => String(value ?? "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#039;");
+const isoDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return new Date(value.getTime());
+  const text = String(value).trim();
+  const dateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+  }
+  return new Date(text);
+};
+const validDate = (date) => date instanceof Date && !Number.isNaN(date.getTime());
+const localDateKey = (value) => {
+  const date = isoDate(value);
+  return validDate(date)
+    ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+    : "";
+};
 const brDate = (value) => {
   const date = isoDate(value);
-  return date && !Number.isNaN(date) ? date.toLocaleDateString("pt-BR") : "-";
+  return validDate(date) ? date.toLocaleDateString("pt-BR") : "-";
 };
 const brDateTime = (value) => {
   const date = isoDate(value);
-  return date && !Number.isNaN(date) ? date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "-";
+  return validDate(date) ? date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "-";
 };
 
 const appNow = () => {
@@ -56,7 +78,7 @@ const appNow = () => {
 
 const countdownLabel = (value) => {
   const target = isoDate(value);
-  if (!target || Number.isNaN(target)) return "-";
+  if (!validDate(target)) return "-";
   let diff = target - new Date();
   if (diff <= 0) return "começou";
   const days = Math.floor(diff / 86400000);
@@ -71,10 +93,13 @@ const countdownLabel = (value) => {
 
 function deliveryStatus(item) {
   const due = isoDate(item.prazo_entrega);
-  if (!due || Number.isNaN(due)) {
+  if (!validDate(due)) {
     return { cls: "missing", label: "Sem prazo", detail: "Defina a data limite de entrega" };
   }
-  const diff = Math.ceil((due - appNow()) / 86400000);
+  const now = appNow();
+  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+  const currentDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((dueDay - currentDay) / 86400000);
   if (diff < 0) return { cls: "late", label: "Atrasada", detail: `Vencida há ${Math.abs(diff)} dia${Math.abs(diff) === 1 ? "" : "s"}` };
   if (diff === 0) return { cls: "due", label: "Vence hoje", detail: "Entrega precisa de atenção hoje" };
   if (diff <= 7) return { cls: "due", label: "Próxima", detail: `Vence em ${diff} dia${diff === 1 ? "" : "s"}` };
@@ -97,7 +122,7 @@ function deliveryDeadlineBlock(item) {
 
 function monthKey(value) {
   const date = isoDate(value);
-  return date && !Number.isNaN(date) ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` : "";
+  return validDate(date) ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` : "";
 }
 
 function monthLabel(value) {
@@ -435,11 +460,11 @@ function alertTender(t) {
 function orderAlert(group) {
   const item = group.items[0];
   const isCarona = item.origem_encomenda === "Carona";
-  const due = isoDate(item.prazo_entrega);
-  const diff = due ? Math.ceil((due - appNow()) / 86400000) : 999;
-  const cls = diff < 0 ? "danger" : diff <= 15 ? "warn" : "ok";
-  const label = diff < 0 ? `Vencida há ${Math.abs(diff)} dias` : `Vence em ${diff} dias`;
+  const delivery = deliveryStatus(item);
+  const cls = delivery.cls === "late" ? "danger" : delivery.cls === "due" ? "warn" : "ok";
+  const label = delivery.detail;
   const total = group.items.reduce((sum, current) => sum + itemBusinessTotal(current), 0);
+  const hasObservation = group.items.some((current) => String(current.observação_encomenda || "").trim());
   return `
     <article class="alert-card dashboard-order-alert ${cls}">
       <div class="alert-head"><strong>${label}</strong><span>${brDate(item.prazo_entrega)}</span></div>
@@ -450,7 +475,7 @@ function orderAlert(group) {
         </div>
         <div><small>Total</small><strong>${money(total)}</strong></div>
       </div>
-      <div class="meta">${isCarona ? `<span class="tag">Referência: Pregão ${item.tender.pregão}</span>` : ""}<span class="tag">UASG ${item.tender.uasg}</span><span class="tag">${group.items.length} produto${group.items.length === 1 ? "" : "s"}</span></div>
+      <div class="meta">${isCarona ? `<span class="tag">Referência: Pregão ${item.tender.pregão}</span>` : ""}<span class="tag">UASG ${item.tender.uasg}</span><span class="tag">${group.items.length} produto${group.items.length === 1 ? "" : "s"}</span>${hasObservation ? `<span class="tag warn">Com observação</span>` : ""}</div>
       <div class="dashboard-order-products">
         ${group.items.map((current) => `
           <div>
@@ -516,7 +541,7 @@ function renderPast() {
       if (platform && (t.plataforma || "ComprasNet") !== platform) return false;
       if (year && String(d.getFullYear()) !== year) return false;
       if (month && String(d.getMonth() + 1).padStart(2, "0") !== month.padStart(2, "0")) return false;
-      if (exactDate && d.toISOString().slice(0, 10) !== exactDate) return false;
+      if (exactDate && localDateKey(d) !== exactDate) return false;
       return true;
     })
     .sort((a, b) => isoDate(b.data_limite) - isoDate(a.data_limite));
@@ -604,9 +629,32 @@ function orderGroupFilterMatch(group, searchSelector, minSelector) {
   const q = ($(searchSelector)?.value || "").toLowerCase().trim();
   const min = numberValue($(minSelector)?.value || "");
   const haystack = group.items.map((item) => (
-    `${item.item || ""} ${item.marca || ""} ${item.modelo || ""} ${item.referência || ""} ${item.tender.pregão || ""} ${item.tender.uasg || ""} ${item.tender.órgão || ""} ${item.órgão_solicitante || ""}`
+    `${item.item || ""} ${item.marca || ""} ${item.modelo || ""} ${item.referência || ""} ${item.tender.pregão || ""} ${item.tender.uasg || ""} ${item.tender.órgão || ""} ${item.órgão_solicitante || ""} ${item.observação_encomenda || ""}`
   )).join(" ").toLowerCase();
   return (!q || haystack.includes(q)) && (!min || orderGroupTotal(group) >= min);
+}
+
+function orderObservationBlock(group) {
+  const observations = new Map();
+  group.items.forEach((item) => {
+    const text = String(item.observação_encomenda || "").trim();
+    if (!text) return;
+    if (!observations.has(text)) observations.set(text, new Set());
+    if (item.item) observations.get(text).add(String(item.item));
+  });
+  const entries = [...observations.entries()];
+  if (!entries.length) return "";
+  return `
+    <div class="order-observation">
+      <span class="order-observation-icon" aria-hidden="true">!</span>
+      <div>
+        <small>${entries.length === 1 ? "Observação da encomenda" : "Observações da encomenda"}</small>
+        ${entries.map(([text, itemNumbers]) => `
+          <p>${entries.length > 1 && itemNumbers.size ? `<strong>Item ${[...itemNumbers].join(", ")}: </strong>` : ""}${escapeHtml(text)}</p>
+        `).join("")}
+      </div>
+    </div>
+  `;
 }
 
 function completedDeliveryBlock(item) {
@@ -670,6 +718,7 @@ function orderGroupCard(group, finished = false) {
         ${finished ? completedDeliveryBlock(first) : deliveryDeadlineBlock(first)}
         <div class="address-text"><small>Endereço de entrega</small><span>${first.endereço_entrega || "Sem endereço registrado"}</span></div>
       </div>
+      ${orderObservationBlock(group)}
       <div class="order-group-products">
         ${group.items.map((item) => orderProductRow(item, finished)).join("")}
       </div>

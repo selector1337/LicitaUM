@@ -1396,6 +1396,45 @@ body.dark .finished-facts span {
 .order-group-shared .address-text {
   grid-area: auto;
 }
+.order-observation {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: 11px;
+  padding: 13px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--warn), var(--line) 65%);
+  background: color-mix(in srgb, var(--warn), var(--panel) 94%);
+}
+.order-observation-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--warn), transparent 35%);
+  border-radius: 9px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn), transparent 88%);
+  font-size: 16px;
+  font-weight: 900;
+}
+.order-observation > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.order-observation small {
+  color: var(--warn);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.order-observation p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 .order-group-products {
   display: grid;
 }
@@ -1465,6 +1504,16 @@ body.dark .order-group-shared,
 body.dark .order-group-product {
   border-color: #304650;
 }
+body.dark .order-observation {
+  border-color: rgba(243, 189, 98, .28);
+  background: rgba(243, 189, 98, .08);
+}
+body.dark .order-observation-icon {
+  color: #f3bd62;
+  border-color: rgba(243, 189, 98, .42);
+  background: rgba(243, 189, 98, .11);
+}
+body.dark .order-observation small { color: #f3bd62; }
 .order-card {
   border-top: 5px solid var(--ok);
   display: flex;
