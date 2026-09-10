@@ -28,6 +28,7 @@ DB_PATH = ROOT / "licitacoes.db"
 STATIC = ROOT / "static"
 OUTPUTS = ROOT / "propostas_geradas"
 UPLOADS = ROOT / "uploads"
+EXPORT_TEMP = ROOT / "data" / "exportacoes_temporarias"
 TEMPLATE_SOURCE = Path(r"C:\Users\selector\Downloads\Proposta Vogen Cosmetics (10).docx")
 TEMPLATE_COPY = ROOT / "modelo_proposta_vogen.docx"
 
@@ -573,6 +574,289 @@ def application_state() -> list[dict]:
     return tenders
 
 
+def export_datetime(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", ""))
+    except ValueError:
+        return None
+
+
+def export_column(key: str, label: str, kind: str = "text", width: int = 0, pdf_weight: float = 1) -> dict:
+    return {"key": key, "label": label, "kind": kind, "width": width, "pdf_weight": pdf_weight, "wrap": kind == "text"}
+
+
+TENDER_EXPORT_COLUMNS = [
+    export_column("pregao", "Pregão", width=18),
+    export_column("uasg", "UASG", width=13),
+    export_column("orgao", "Órgão", width=34, pdf_weight=2.2),
+    export_column("localidade", "Localidade", width=20),
+    export_column("plataforma", "Plataforma", width=14),
+    export_column("modalidade", "Modalidade", width=20),
+    export_column("data_limite", "Data e hora", "datetime", width=18),
+    export_column("data_proposta", "Data da proposta", "date", width=17),
+    export_column("status_licitacao", "Status da licitação", width=23),
+]
+
+ITEM_EXPORT_COLUMNS = TENDER_EXPORT_COLUMNS + [
+    export_column("lote", "Lote", width=10),
+    export_column("item", "Item", width=9),
+    export_column("tipo_produto", "Produto", width=13),
+    export_column("cadastrar", "Cadastrar/Disputar", width=18),
+    export_column("marca", "Marca", width=18),
+    export_column("modelo", "Modelo", width=25, pdf_weight=1.6),
+    export_column("referencia", "Referência", width=28, pdf_weight=1.8),
+    export_column("quantidade", "Qtd. ganha/solicitada", "number", width=18),
+    export_column("valor_sigiloso", "Referência sigilosa", width=17),
+    export_column("valor_unitario_referencia", "Valor unit. referência", "currency", width=20),
+    export_column("valor_total_referencia", "Total referência", "currency", width=18),
+    export_column("valor_cadastro", "Valor cadastro", "currency", width=17),
+    export_column("valor_total_cadastro", "Total cadastro", "currency", width=17),
+    export_column("valor_minimo", "Valor mínimo", "currency", width=16),
+    export_column("valor_total_minimo", "Total mínimo", "currency", width=16),
+    export_column("valor_ganho", "Valor ganho unit.", "currency", width=18),
+    export_column("valor_total_ganho", "Total ganho", "currency", width=17),
+    export_column("valor_total_pendente", "Total pendente", "currency", width=17),
+    export_column("status_item", "Status do item", width=23),
+    export_column("qtd_empenhada", "Qtd. empenhada", "number", width=16),
+    export_column("qtd_pendente", "Qtd. pendente", "number", width=15),
+    export_column("responsavel_preco", "Responsável pelo preço", width=23),
+    export_column("link_fornecedor", "Link fornecedor", width=35, pdf_weight=2),
+    export_column("link_br", "Link BR", width=30, pdf_weight=1.8),
+    export_column("link_usa", "Link USA", width=30, pdf_weight=1.8),
+    export_column("observacao_item", "Observação do item", width=38, pdf_weight=2.4),
+]
+
+ORDER_EXPORT_COLUMNS = TENDER_EXPORT_COLUMNS + [
+    export_column("grupo", "Grupo da encomenda", width=20),
+    export_column("origem", "Origem", width=12),
+    export_column("orgao_solicitante", "Órgão solicitante", width=30, pdf_weight=2),
+    export_column("lote", "Lote", width=10),
+    export_column("item", "Item", width=9),
+    export_column("marca", "Marca", width=18),
+    export_column("modelo", "Modelo", width=25, pdf_weight=1.6),
+    export_column("referencia", "Referência", width=28, pdf_weight=1.8),
+    export_column("qtd_empenhada", "Qtd. empenhada", "number", width=16),
+    export_column("valor_unitario", "Valor unitário", "currency", width=17),
+    export_column("valor_total", "Valor total", "currency", width=17),
+    export_column("prazo_entrega", "Prazo de entrega", "date", width=17),
+    export_column("ordem_fornecimento", "Ordem de fornecimento", width=21),
+    export_column("nota_empenho", "Nota de empenho", width=19),
+    export_column("status_encomenda", "Status da encomenda", width=20),
+    export_column("pagamento", "Pagamento", width=19),
+    export_column("endereco_entrega", "Endereço de entrega", width=48, pdf_weight=3),
+    export_column("observacao_encomenda", "Observação da encomenda", width=40, pdf_weight=2.5),
+    export_column("status_item", "Status do item", width=23),
+    export_column("observacao_item", "Observação do item", width=38, pdf_weight=2.4),
+]
+
+DOCUMENT_EXPORT_COLUMNS = [
+    export_column("tipo", "Tipo", width=16),
+    export_column("item", "Item vinculado", width=15),
+    export_column("arquivo", "Arquivo", width=45, pdf_weight=3),
+    export_column("content_type", "Formato", width=27),
+    export_column("enviado_em", "Enviado em", "datetime", width=20),
+]
+
+
+def tender_export_base(tender: dict) -> dict:
+    proposal_date = export_datetime(tender.get("data_proposta"))
+    return {
+        "pregao": tender.get("pregão") or "-",
+        "uasg": tender.get("uasg") or "-",
+        "orgao": tender.get("órgão") or "-",
+        "localidade": tender.get("localidade") or "-",
+        "plataforma": tender.get("plataforma") or "ComprasNet",
+        "modalidade": tender.get("modalidade") or "Pregão Eletrônico",
+        "data_limite": export_datetime(tender.get("data_limite")),
+        "data_proposta": proposal_date.date() if proposal_date else None,
+        "status_licitacao": tender.get("status") or "-",
+    }
+
+
+def item_export_record(tender: dict, item: dict) -> dict:
+    quantity = money(item.get("qtd"))
+    reference = money(item.get("valor_unitário"))
+    registration = money(item.get("valor_cadastro"))
+    minimum = money(item.get("valor_mínimo"))
+    won = money(item.get("valor_ganho"))
+    pending_quantity = money(item.get("qtd_pendente"))
+    secret = bool(item.get("valor_sigiloso"))
+    selected = int(item.get("selecionado_cadastro") if item.get("selecionado_cadastro") is not None else 1) != 0
+    option = str(item.get("opção_produto") or "").strip()
+    return {
+        **tender_export_base(tender),
+        "lote": item.get("lote") or "Avulso",
+        "item": item.get("item") or "-",
+        "tipo_produto": option or "Principal",
+        "cadastrar": "Sim" if selected else "Não disputar",
+        "marca": item.get("marca") or "-",
+        "modelo": item.get("modelo") or "-",
+        "referencia": item.get("referência") or "-",
+        "quantidade": float(quantity),
+        "valor_sigiloso": "Sim" if secret else "Não",
+        "valor_unitario_referencia": None if secret else float(reference),
+        "valor_total_referencia": None if secret else float(reference * quantity),
+        "valor_cadastro": float(registration),
+        "valor_total_cadastro": float(registration * quantity),
+        "valor_minimo": float(minimum),
+        "valor_total_minimo": float(minimum * quantity),
+        "valor_ganho": float(won),
+        "valor_total_ganho": float(won * quantity),
+        "valor_total_pendente": float(won * pending_quantity),
+        "status_item": item.get("status") or "-",
+        "qtd_empenhada": float(money(item.get("qtd_empenhada_total"))),
+        "qtd_pendente": float(pending_quantity),
+        "responsavel_preco": item.get("responsável_preço") or "-",
+        "link_fornecedor": item.get("link_referência") or "-",
+        "link_br": item.get("link_br") or "-",
+        "link_usa": item.get("link_usa") or "-",
+        "observacao_item": item.get("observação") or "-",
+    }
+
+
+def order_export_record(tender: dict, item: dict, order: dict) -> dict:
+    quantity = money(order.get("qtd_empenhada"))
+    unit_value = effective_unit_value(item)
+    return {
+        **tender_export_base(tender),
+        "grupo": order.get("group_id") or f"order-{order.get('id')}",
+        "origem": order.get("origem") or "Empenho",
+        "orgao_solicitante": order.get("órgão_solicitante") or "-",
+        "lote": item.get("lote") or "Avulso",
+        "item": item.get("item") or "-",
+        "marca": item.get("marca") or "-",
+        "modelo": item.get("modelo") or "-",
+        "referencia": item.get("referência") or "-",
+        "qtd_empenhada": float(quantity),
+        "valor_unitario": float(unit_value),
+        "valor_total": float(quantity * unit_value),
+        "prazo_entrega": export_datetime(order.get("prazo_entrega")),
+        "ordem_fornecimento": order.get("ordem_fornecimento") or "-",
+        "nota_empenho": order.get("nota_empenho") or "-",
+        "status_encomenda": order.get("status") or "-",
+        "pagamento": "Pago" if order.get("pagamento_recebido") else "Pendente",
+        "endereco_entrega": order.get("endereço_entrega") or "-",
+        "observacao_encomenda": order.get("observação") or "-",
+        "status_item": item.get("status") or "-",
+        "observacao_item": item.get("observação") or "-",
+        "_order_id": int(order.get("id") or 0),
+    }
+
+
+def all_export_rows() -> tuple[list[dict], list[dict]]:
+    item_rows, order_rows = [], []
+    for tender in application_state():
+        for item in tender.get("items", []):
+            item_record = item_export_record(tender, item)
+            item_record["_item_id"] = int(item.get("id") or 0)
+            item_rows.append(item_record)
+            for order in item.get("orders", []):
+                order_rows.append(order_export_record(tender, item, order))
+    return item_rows, order_rows
+
+
+def report_total(rows: list[dict], key: str) -> Decimal:
+    return sum((money(row.get(key)) for row in rows), Decimal("0"))
+
+
+def sector_export_report(sector: str, selected_ids: set[int] | None = None) -> dict:
+    item_rows, order_rows = all_export_rows()
+    sector_names = {
+        "won": "Itens Ganhos",
+        "proposal": "Itens em Proposta",
+        "orders": "Encomendas",
+        "finished": "Finalizados",
+    }
+    if sector not in sector_names:
+        raise ValueError("Tipo de exportação inválido.")
+
+    if sector == "won":
+        rows = [row for row in item_rows if row["status_item"] in ("Aguardando Habilitação", "Julgado e Habilitado", "Adjudicada") and money(row["qtd_pendente"]) > 0]
+        id_key, columns, total_key = "_item_id", ITEM_EXPORT_COLUMNS, "valor_total_pendente"
+    elif sector == "proposal":
+        rows = [row for row in item_rows if row["status_item"] == "Proposta enviada"]
+        id_key, columns, total_key = "_item_id", ITEM_EXPORT_COLUMNS, "valor_total_ganho"
+    elif sector == "orders":
+        rows = [row for row in order_rows if row["status_encomenda"] != "Entregue"]
+        id_key, columns, total_key = "_order_id", ORDER_EXPORT_COLUMNS, "valor_total"
+    else:
+        rows = [row for row in order_rows if row["status_encomenda"] == "Entregue"]
+        id_key, columns, total_key = "_order_id", ORDER_EXPORT_COLUMNS, "valor_total"
+
+    if selected_ids is not None:
+        rows = [row for row in rows if row[id_key] in selected_ids]
+    title = f"LicitaUM - {sector_names[sector]}"
+    unique_tenders = {(row["pregao"], row["uasg"]) for row in rows}
+    summary = [
+        ("Registros exportados", len(rows)),
+        ("Licitações relacionadas", len(unique_tenders)),
+        ("Valor total", brl(report_total(rows, total_key))),
+        ("Gerado em", datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")),
+    ]
+    if sector in ("orders", "finished"):
+        summary.insert(2, ("Encomendas agrupadas", len({row["grupo"] for row in rows})))
+    return {
+        "title": title,
+        "subtitle": "Relatório detalhado gerado a partir dos registros atuais do sistema.",
+        "summary": summary,
+        "sections": [{"title": sector_names[sector], "columns": columns, "rows": rows}],
+    }
+
+
+def tender_export_report(tender_id: int) -> dict:
+    tender = tender_detail(tender_id)
+    item_rows = [item_export_record(tender, item) for item in tender.get("items", [])]
+    order_rows = [
+        order_export_record(tender, item, order)
+        for item in tender.get("items", [])
+        for order in item.get("orders", [])
+    ]
+    item_by_id = {int(item.get("id") or 0): item.get("item") or "-" for item in tender.get("items", [])}
+    document_rows = [{
+        "tipo": attachment.get("tipo") or "-",
+        "item": item_by_id.get(int(attachment.get("item_id") or 0), "Licitação"),
+        "arquivo": attachment.get("filename") or "-",
+        "content_type": attachment.get("content_type") or "-",
+        "enviado_em": export_datetime(attachment.get("uploaded_at")),
+    } for attachment in tender.get("attachments", [])]
+    secret_count = sum(1 for item in tender.get("items", []) if item.get("valor_sigiloso"))
+    proposal_date = export_datetime(tender.get("data_proposta"))
+    summary = [
+        ("Pregão", tender.get("pregão") or "-"),
+        ("UASG", tender.get("uasg") or "-"),
+        ("Órgão", tender.get("órgão") or "-"),
+        ("Localidade", tender.get("localidade") or "-"),
+        ("Plataforma", tender.get("plataforma") or "ComprasNet"),
+        ("Modalidade", tender.get("modalidade") or "Pregão Eletrônico"),
+        ("Data e hora", export_datetime(tender.get("data_limite")) or "-"),
+        ("Data da proposta", proposal_date.date() if proposal_date else "-"),
+        ("Status", tender.get("status") or "-"),
+        ("Itens cadastrados", len(item_rows)),
+        ("Itens com referência sigilosa", secret_count),
+        ("Valor de referência", "Sigiloso" if secret_count else brl(tender.get("valor_total"))),
+        ("Valor mínimo total", brl(tender.get("valor_minimo_total"))),
+        ("Observação", tender.get("observação") or "-"),
+        ("Gerado em", datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")),
+    ]
+    return {
+        "title": f"LicitaUM - Pregão {tender.get('pregão')}",
+        "subtitle": f"Relatório completo da licitação - UASG {tender.get('uasg')}",
+        "summary": summary,
+        "sections": [
+            {"title": "Itens", "columns": ITEM_EXPORT_COLUMNS, "rows": item_rows},
+            {"title": "Encomendas", "columns": ORDER_EXPORT_COLUMNS, "rows": order_rows},
+            {"title": "Documentos", "columns": DOCUMENT_EXPORT_COLUMNS, "rows": document_rows},
+        ],
+    }
+
+
+def export_temporary_path(base_name: str, output_format: str) -> Path:
+    EXPORT_TEMP.mkdir(parents=True, exist_ok=True)
+    return EXPORT_TEMP / f"{safe_name(base_name)}-{uuid.uuid4().hex}.{output_format}"
+
+
 def read_body(handler: BaseHTTPRequestHandler) -> dict:
     length = int(handler.headers.get("Content-Length", "0"))
     if not length:
@@ -1060,6 +1344,23 @@ class App(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def send_export(self, report: dict, output_format: str, base_name: str) -> None:
+        output = export_temporary_path(base_name, output_format)
+        try:
+            if output_format == "xlsx":
+                from report_exports import generate_xlsx
+                generate_xlsx(report, output)
+                content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            elif output_format == "pdf":
+                from report_exports import generate_pdf
+                generate_pdf(report, output)
+                content_type = "application/pdf"
+            else:
+                raise ValueError("Formato de exportação inválido.")
+            self.send_file(output, content_type, f"{safe_name(base_name)}.{output_format}")
+        finally:
+            output.unlink(missing_ok=True)
+
     def do_GET(self) -> None:
         try:
             parsed = urlparse(self.path)
@@ -1098,6 +1399,22 @@ class App(BaseHTTPRequestHandler):
                 attachment_id = int(path.strip("/").split("/")[1])
                 attachment = get_attachment(attachment_id)
                 return self.send_file(UPLOADS / attachment["stored_name"], attachment.get("content_type") or "application/octet-stream", attachment["filename"])
+            if path.startswith("/export/tender/"):
+                tender_id = int(path.strip("/").split("/")[-1])
+                output_format = qs.get("format", ["xlsx"])[0].lower()
+                report = tender_export_report(tender_id)
+                tender = tender_detail(tender_id)
+                base_name = f"Relatorio Pregao {tender.get('pregão')} UASG {tender.get('uasg')}"
+                return self.send_export(report, output_format, base_name)
+            if path.startswith("/export/sector/"):
+                sector = path.strip("/").split("/")[-1]
+                output_format = qs.get("format", ["xlsx"])[0].lower()
+                raw_ids = qs.get("ids", [None])[0]
+                selected_ids = {int(value) for value in raw_ids.split(",") if value} if raw_ids is not None else None
+                report = sector_export_report(sector, selected_ids)
+                sector_label = {"won": "Itens Ganhos", "proposal": "Itens em Proposta", "orders": "Encomendas", "finished": "Finalizados"}.get(sector, "Relatorio")
+                base_name = f"LicitaUM {sector_label} {current_business_date().isoformat()}"
+                return self.send_export(report, output_format, base_name)
             if path.startswith("/proposal/"):
                 tender_id = int(path.split("/")[-1])
                 item_ids = [int(item_id) for item_id in qs.get("items", [""])[0].split(",") if item_id]
@@ -1115,7 +1432,17 @@ class App(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         try:
             path = urlparse(self.path).path
+            parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
             data = read_body(self)
+            if path.startswith("/export/sector/"):
+                sector = path.strip("/").split("/")[-1]
+                output_format = qs.get("format", ["xlsx"])[0].lower()
+                selected_ids = {int(value) for value in data.get("ids", [])}
+                report = sector_export_report(sector, selected_ids)
+                sector_label = {"won": "Itens Ganhos", "proposal": "Itens em Proposta", "orders": "Encomendas", "finished": "Finalizados"}.get(sector, "Relatorio")
+                base_name = f"LicitaUM {sector_label} {current_business_date().isoformat()}"
+                return self.send_export(report, output_format, base_name)
             if path == "/api/login":
                 return self.send_json(authenticate_user(data))
             if path == "/api/tenders":

@@ -18,6 +18,7 @@ const state = {
   proposalItemId: null,
   orderItemIds: [],
   caronaItemIds: [],
+  exportIds: { won: [], proposal: [], orders: [], finished: [] },
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -560,6 +561,7 @@ function renderWon() {
   else if (sort === "status") rows = rows.sort((a, b) => String(a.status || "").localeCompare(String(b.status || "")));
   else if (sort === "pregao") rows = rows.sort((a, b) => String(a.tender.pregão || "").localeCompare(String(b.tender.pregão || "")));
   else rows = rows.sort((a, b) => itemBusinessTotal(b) - itemBusinessTotal(a));
+  state.exportIds.won = rows.map((item) => Number(item.id));
   $("#wonList").classList.toggle("list-mode", state.viewModes.won === "list");
   $("#wonList").innerHTML = sectorSummary(rows) + `
     <div class="bulk-order-bar">
@@ -593,6 +595,7 @@ function renderProposalItems() {
     .filter((i) => i.status === "Proposta enviada")
     .filter((i) => itemFilterMatch(i, "#proposalSearch", "#proposalMinValue"))
     .sort((a, b) => String(a.tender.data_limite || "").localeCompare(String(b.tender.data_limite || "")));
+  state.exportIds.proposal = rows.map((item) => Number(item.id));
   $("#proposalItemsList").classList.toggle("list-mode", state.viewModes.proposalItems === "list");
   $("#proposalItemsList").innerHTML = sectorSummary(rows) + (rows.map((i) => `
     <article class="product-card">
@@ -739,6 +742,7 @@ function renderOrders() {
   else if (sort === "status") groups.sort((a, b) => String(a.items[0].status_encomenda || "").localeCompare(String(b.items[0].status_encomenda || "")));
   else groups.sort((a, b) => (isoDate(a.items[0].prazo_entrega) || new Date(8640000000000000)) - (isoDate(b.items[0].prazo_entrega) || new Date(8640000000000000)));
   const rows = groups.flatMap((group) => group.items);
+  state.exportIds.orders = rows.map((item) => Number(item.order_id));
   $("#ordersList").classList.toggle("list-mode", state.viewModes.orders === "list");
   $("#ordersList").innerHTML = sectorSummary(rows) + (
     groups.map((group) => orderGroupCard(group)).join("")
@@ -758,6 +762,7 @@ function renderFinished() {
   else if (sort === "pregao") groups.sort((a, b) => String(a.items[0].tender.pregão).localeCompare(String(b.items[0].tender.pregão)));
   else groups.sort((a, b) => String(b.items[0].prazo_entrega || b.items[0].tender.data_limite || "").localeCompare(String(a.items[0].prazo_entrega || a.items[0].tender.data_limite || "")));
   const rows = groups.flatMap((group) => group.items);
+  state.exportIds.finished = rows.map((item) => Number(item.order_id));
   $("#finishedList").classList.toggle("list-mode", state.viewModes.finished === "list");
   $("#finishedList").innerHTML = sectorSummary(rows, "Total entregue") + (
     groups.map((group) => orderGroupCard(group, true)).join("")
@@ -779,6 +784,11 @@ async function openDetail(id) {
       <div class="actions">
         <button onclick="showView('dashboard')">Voltar</button>
         <button onclick="editTender(${t.id})">Editar licitação</button>
+        <div class="export-actions detail-export" aria-label="Exportar esta licitação">
+          <span>Exportar</span>
+          <button title="Exportar licitação completa para planilha" onclick="exportTender(this, ${t.id}, 'xlsx')">XLSX</button>
+          <button title="Exportar licitação completa para PDF" onclick="exportTender(this, ${t.id}, 'pdf')">PDF</button>
+        </div>
         <button onclick='openUpload(${t.id}, "", "Proposta")'>Propostas</button>
         <button onclick='openUpload(${t.id}, "", "Edital")'>Edital</button>
         <button onclick='openUpload(${t.id}, "", "Empenho")'>Empenho</button>
@@ -1351,6 +1361,50 @@ async function generateSelected(format) {
   await api("/api/items/bulk", { method: "POST", body: JSON.stringify({ item_ids: ids, status: "Proposta enviada" }) });
   await load();
   if (state.current) await openDetail(state.current.id);
+}
+
+async function downloadExport(button, url, options = {}) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Gerando...";
+  try {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Não foi possível gerar a exportação.");
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : "LicitaUM-exportacao";
+    const link = document.createElement("a");
+    const objectUrl = URL.createObjectURL(blob);
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function exportCurrentSector(button, sector, format) {
+  const ids = state.exportIds[sector] || [];
+  if (!ids.length) return alert("Não há registros no filtro atual para exportar.");
+  return downloadExport(button, `/export/sector/${sector}?format=${format}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+}
+
+function exportTender(button, tenderId, format) {
+  return downloadExport(button, `/export/tender/${tenderId}?format=${format}`);
 }
 
 function showView(view) {

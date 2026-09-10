@@ -186,6 +186,11 @@ button:hover {
   box-shadow: var(--soft-shadow);
 }
 button:active { transform: translateY(1px); }
+button:disabled {
+  opacity: .58;
+  cursor: wait;
+  transform: none;
+}
 .primary {
   background: linear-gradient(135deg, var(--brand), var(--brand-2));
   border-color: color-mix(in srgb, var(--brand), #fff 8%);
@@ -417,6 +422,62 @@ label { display: grid; gap: 5px; font-size: 13px; color: var(--muted); }
 }
 .filter-stack .grid3 {
   width: 100%;
+}
+.section-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.export-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  width: max-content;
+  margin-top: 10px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel), transparent 5%);
+}
+.section-title-actions .export-actions,
+.detail-export { margin-top: 0; }
+.export-actions > span {
+  padding: 0 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.export-actions > button {
+  min-height: 30px;
+  padding: 6px 9px;
+  border-color: transparent;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 900;
+}
+.export-actions > button:hover {
+  border-color: color-mix(in srgb, var(--brand), transparent 55%);
+  background: color-mix(in srgb, var(--brand), transparent 90%);
+  box-shadow: none;
+}
+body.dark .export-actions {
+  border-color: #48616c;
+  background: #0d181e;
+}
+body.dark .export-actions > button {
+  border-color: transparent;
+  background: transparent;
+  color: #7fc0ff;
+}
+body.dark .export-actions > button:hover {
+  border-color: rgba(127, 192, 255, .45);
+  background: rgba(90, 168, 255, .12);
 }
 .view-toggle {
   display: inline-flex;

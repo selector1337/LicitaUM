@@ -106,6 +106,11 @@
           <div>
             <h2>Itens ganhos sem empenho</h2>
             <p>Status permitidos: Aguardando Habilitação, Julgado e Habilitado, Adjudicada.</p>
+            <div class="export-actions" aria-label="Exportar itens ganhos">
+              <span>Exportar</span>
+              <button type="button" title="Exportar itens filtrados para planilha" onclick="exportCurrentSector(this, 'won', 'xlsx')">XLSX</button>
+              <button type="button" title="Exportar itens filtrados para PDF" onclick="exportCurrentSector(this, 'won', 'pdf')">PDF</button>
+            </div>
           </div>
           <div class="filter-stack">
             <input id="wonSearch" placeholder="Filtrar por produto, pregão, UASG..." />
@@ -133,6 +138,11 @@
           <div>
             <h2>Itens em proposta</h2>
             <p>Itens enviados em proposta e aguardando avaliação do órgão.</p>
+            <div class="export-actions" aria-label="Exportar itens em proposta">
+              <span>Exportar</span>
+              <button type="button" title="Exportar itens filtrados para planilha" onclick="exportCurrentSector(this, 'proposal', 'xlsx')">XLSX</button>
+              <button type="button" title="Exportar itens filtrados para PDF" onclick="exportCurrentSector(this, 'proposal', 'pdf')">PDF</button>
+            </div>
           </div>
           <div class="filter-stack">
             <input id="proposalSearch" placeholder="Filtrar por produto, pregão, UASG..." />
@@ -148,7 +158,14 @@
           <div>
             <h2>Encomendas</h2>
             <p>Ordenado por padrão pelo que vai vencer primeiro.</p>
-            <button type="button" class="primary section-action" onclick="openCaronaDialog()">Cadastrar Carona</button>
+            <div class="section-title-actions">
+              <button type="button" class="primary" onclick="openCaronaDialog()">Cadastrar Carona</button>
+              <div class="export-actions" aria-label="Exportar encomendas">
+                <span>Exportar</span>
+                <button type="button" title="Exportar encomendas filtradas para planilha" onclick="exportCurrentSector(this, 'orders', 'xlsx')">XLSX</button>
+                <button type="button" title="Exportar encomendas filtradas para PDF" onclick="exportCurrentSector(this, 'orders', 'pdf')">PDF</button>
+              </div>
+            </div>
           </div>
           <div class="filter-stack">
             <input id="orderSearch" placeholder="Filtrar por produto, pregão, UASG..." />
@@ -170,6 +187,11 @@
           <div>
             <h2>Finalizadas</h2>
             <p>Itens já fornecidos ou processos encerrados, com histórico para consulta.</p>
+            <div class="export-actions" aria-label="Exportar finalizados">
+              <span>Exportar</span>
+              <button type="button" title="Exportar itens filtrados para planilha" onclick="exportCurrentSector(this, 'finished', 'xlsx')">XLSX</button>
+              <button type="button" title="Exportar itens filtrados para PDF" onclick="exportCurrentSector(this, 'finished', 'pdf')">PDF</button>
+            </div>
           </div>
           <div class="filter-stack">
             <input id="finishedSearch" placeholder="Filtrar por produto, pregão, UASG..." />
