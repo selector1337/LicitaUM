@@ -774,6 +774,11 @@ def order_export_record(tender: dict, item: dict, order: dict) -> dict:
         for value in (item.get("marca"), item.get("modelo"), item.get("referência"))
         if str(value or "").strip()
     ) or "-"
+    observation_parts = []
+    if order.get("observação"):
+        observation_parts.append(str(order["observação"]).strip())
+    observation_parts.append(f"Status: {order_status}")
+    observation_parts.append(f"Pagamento: {'Pago' if order.get('pagamento_recebido') else 'Pendente'}")
     return {
         **tender_export_base(tender),
         "grupo": order.get("group_id") or f"order-{order.get('id')}",
@@ -785,6 +790,8 @@ def order_export_record(tender: dict, item: dict, order: dict) -> dict:
         "modelo": item.get("modelo") or "-",
         "referencia": item.get("referência") or "-",
         "produto": product,
+        "link_referencia": item.get("link_referência") or "",
+        "link_referencia_rotulo": item.get("marca") or "Abrir link",
         "qtd_empenhada": float(quantity),
         "valor_unitario": float(unit_value),
         "valor_total": float(quantity * unit_value),
@@ -796,6 +803,7 @@ def order_export_record(tender: dict, item: dict, order: dict) -> dict:
         "pagamento": "Pago" if order.get("pagamento_recebido") else "Pendente",
         "endereco_entrega": order.get("endereço_entrega") or "-",
         "observacao_encomenda": order.get("observação") or "-",
+        "observacao_planilha": " | ".join(observation_parts),
         "_order_id": int(order.get("id") or 0),
     }
 
@@ -851,10 +859,20 @@ def sector_export_report(sector: str, selected_ids: set[int] | None = None) -> d
     if sector in ("won", "proposal", "orders", "finished"):
         rows.sort(key=lambda row: (
             str(row.get("pregao") or ""),
+            str(row.get("uasg") or ""),
             export_number_sort(row.get("lote")),
             export_number_sort(row.get("item")),
             str(row.get("prazo_entrega") or ""),
         ))
+    if sector in ("orders", "finished"):
+        tender_totals = {}
+        for row in rows:
+            key = (row.get("pregao"), row.get("uasg"))
+            tender_totals[key] = tender_totals.get(key, Decimal("0")) + money(row.get("valor_total"))
+        for row in rows:
+            total = tender_totals[(row.get("pregao"), row.get("uasg"))]
+            row["total_licitacao"] = float(total)
+            row["total_licitacao_formatado"] = brl(total)
     title = f"LicitaUM - {sector_names[sector]}"
     unique_tenders = {(row["pregao"], row["uasg"]) for row in rows}
     summary = [
@@ -868,21 +886,24 @@ def sector_export_report(sector: str, selected_ids: set[int] | None = None) -> d
     section = {"title": sector_names[sector], "columns": columns, "rows": rows}
     if sector in ("won", "proposal"):
         section.update({
-            "group_by": ["pregao", "lote"],
+            "group_by": ["pregao", "uasg", "lote"],
             "group_context": [("Pregão", "pregao"), ("UASG", "uasg"), ("Órgão", "orgao"), ("Lote", "lote")],
             "pdf_columns": ITEM_PDF_COLUMNS,
         })
     if sector in ("orders", "finished"):
         section.update({
-            "group_by": ["pregao", "lote"],
+            "group_by": ["pregao", "uasg", "lote"],
             "group_context": [
                 ("Pregão", "pregao"),
                 ("UASG", "uasg"),
                 ("Órgão", "orgao"),
                 ("Lote", "lote"),
+                ("Total da licitação", "total_licitacao_formatado"),
             ],
             "pdf_columns": ORDER_PDF_COLUMNS,
             "highlight_deadline": True,
+            "xlsx_layout": "orders_standard",
+            "xlsx_sheet_name": "Pendentes" if sector == "orders" else "Resolvidos",
         })
     return {
         "title": title,
@@ -929,6 +950,10 @@ def tender_export_report(tender_id: int) -> dict:
     ]
     item_rows.sort(key=lambda row: (export_number_sort(row.get("lote")), export_number_sort(row.get("item"))))
     order_rows.sort(key=lambda row: (export_number_sort(row.get("lote")), export_number_sort(row.get("item")), str(row.get("prazo_entrega") or "")))
+    tender_order_total = sum((money(row.get("valor_total")) for row in order_rows), Decimal("0"))
+    for row in order_rows:
+        row["total_licitacao"] = float(tender_order_total)
+        row["total_licitacao_formatado"] = brl(tender_order_total)
     return {
         "title": f"LicitaUM - Pregão {tender.get('pregão')}",
         "subtitle": f"Relatório completo da licitação - UASG {tender.get('uasg')}",
@@ -938,7 +963,7 @@ def tender_export_report(tender_id: int) -> dict:
                 "title": "Itens",
                 "columns": ITEM_EXPORT_COLUMNS,
                 "rows": item_rows,
-                "group_by": ["pregao", "lote"],
+                "group_by": ["pregao", "uasg", "lote"],
                 "group_context": [("Pregão", "pregao"), ("UASG", "uasg"), ("Órgão", "orgao"), ("Lote", "lote")],
                 "pdf_columns": ITEM_PDF_COLUMNS,
             },
@@ -946,10 +971,12 @@ def tender_export_report(tender_id: int) -> dict:
                 "title": "Encomendas",
                 "columns": ORDER_EXPORT_COLUMNS,
                 "rows": order_rows,
-                "group_by": ["pregao", "lote"],
-                "group_context": [("Pregão", "pregao"), ("UASG", "uasg"), ("Órgão", "orgao"), ("Lote", "lote")],
+                "group_by": ["pregao", "uasg", "lote"],
+                "group_context": [("Pregão", "pregao"), ("UASG", "uasg"), ("Órgão", "orgao"), ("Lote", "lote"), ("Total da licitação", "total_licitacao_formatado")],
                 "pdf_columns": ORDER_PDF_COLUMNS,
                 "highlight_deadline": True,
+                "xlsx_layout": "orders_standard",
+                "xlsx_sheet_name": "Encomendas",
             },
             {"title": "Documentos", "columns": DOCUMENT_EXPORT_COLUMNS, "rows": document_rows},
         ],
