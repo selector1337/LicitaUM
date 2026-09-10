@@ -628,10 +628,28 @@ ITEM_EXPORT_COLUMNS = TENDER_EXPORT_COLUMNS + [
     export_column("observacao_item", "Observação do item", width=38, pdf_weight=2.4),
 ]
 
-ORDER_EXPORT_COLUMNS = TENDER_EXPORT_COLUMNS + [
-    export_column("grupo", "Grupo da encomenda", width=20),
+ITEM_PDF_COLUMNS = [
+    export_column("item", "Item", width=8),
+    export_column("tipo_produto", "Tipo", width=11),
+    export_column("produto", "Produto", width=40, pdf_weight=2.8),
+    export_column("quantidade", "Qtd.", "number", width=9),
+    export_column("valor_sigiloso", "Sigiloso", width=10),
+    export_column("valor_unitario_referencia", "Referência unit.", "currency", width=16),
+    export_column("valor_cadastro", "Cadastro unit.", "currency", width=15),
+    export_column("valor_minimo", "Mínimo unit.", "currency", width=14),
+    export_column("valor_ganho", "Ganho unit.", "currency", width=14),
+    export_column("valor_total_ganho", "Total ganho", "currency", width=15),
+    export_column("qtd_empenhada", "Qtd. empenhada", "number", width=13),
+    export_column("qtd_pendente", "Qtd. pendente", "number", width=13),
+    export_column("status_item", "Status", width=21, pdf_weight=1.4),
+    export_column("observacao_item", "Observação", width=32, pdf_weight=2.1),
+]
+
+ORDER_EXPORT_COLUMNS = [
+    export_column("pregao", "Pregão", width=18),
+    export_column("uasg", "UASG", width=13),
+    export_column("orgao", "Órgão", width=34, pdf_weight=2.2),
     export_column("origem", "Origem", width=12),
-    export_column("orgao_solicitante", "Órgão solicitante", width=30, pdf_weight=2),
     export_column("lote", "Lote", width=10),
     export_column("item", "Item", width=9),
     export_column("marca", "Marca", width=18),
@@ -640,15 +658,31 @@ ORDER_EXPORT_COLUMNS = TENDER_EXPORT_COLUMNS + [
     export_column("qtd_empenhada", "Qtd. empenhada", "number", width=16),
     export_column("valor_unitario", "Valor unitário", "currency", width=17),
     export_column("valor_total", "Valor total", "currency", width=17),
-    export_column("prazo_entrega", "Prazo de entrega", "date", width=17),
+    export_column("prazo_entrega", "Data de vencimento", "date", width=19),
+    export_column("situacao_prazo", "Situação do vencimento", width=22),
     export_column("ordem_fornecimento", "Ordem de fornecimento", width=21),
     export_column("nota_empenho", "Nota de empenho", width=19),
     export_column("status_encomenda", "Status da encomenda", width=20),
     export_column("pagamento", "Pagamento", width=19),
     export_column("endereco_entrega", "Endereço de entrega", width=48, pdf_weight=3),
     export_column("observacao_encomenda", "Observação da encomenda", width=40, pdf_weight=2.5),
-    export_column("status_item", "Status do item", width=23),
-    export_column("observacao_item", "Observação do item", width=38, pdf_weight=2.4),
+]
+
+ORDER_PDF_COLUMNS = [
+    export_column("item", "Item", width=8),
+    export_column("produto", "Produto", width=38, pdf_weight=2.6),
+    export_column("origem", "Origem", width=11),
+    export_column("qtd_empenhada", "Qtd.", "number", width=9),
+    export_column("valor_unitario", "Valor unit.", "currency", width=15),
+    export_column("valor_total", "Valor total", "currency", width=16),
+    export_column("prazo_entrega", "Vencimento", "date", width=15),
+    export_column("situacao_prazo", "Situação", width=20, pdf_weight=1.3),
+    export_column("ordem_fornecimento", "Ordem fornec.", width=17),
+    export_column("nota_empenho", "Nota empenho", width=16),
+    export_column("status_encomenda", "Encomenda", width=17),
+    export_column("pagamento", "Pagamento", width=15),
+    export_column("endereco_entrega", "Endereço", width=35, pdf_weight=2.3),
+    export_column("observacao_encomenda", "Observação", width=30, pdf_weight=2),
 ]
 
 DOCUMENT_EXPORT_COLUMNS = [
@@ -685,6 +719,11 @@ def item_export_record(tender: dict, item: dict) -> dict:
     secret = bool(item.get("valor_sigiloso"))
     selected = int(item.get("selecionado_cadastro") if item.get("selecionado_cadastro") is not None else 1) != 0
     option = str(item.get("opção_produto") or "").strip()
+    product = " - ".join(
+        str(value).strip()
+        for value in (item.get("marca"), item.get("modelo"), item.get("referência"))
+        if str(value or "").strip()
+    ) or "-"
     return {
         **tender_export_base(tender),
         "lote": item.get("lote") or "Avulso",
@@ -694,6 +733,7 @@ def item_export_record(tender: dict, item: dict) -> dict:
         "marca": item.get("marca") or "-",
         "modelo": item.get("modelo") or "-",
         "referencia": item.get("referência") or "-",
+        "produto": product,
         "quantidade": float(quantity),
         "valor_sigiloso": "Sim" if secret else "Não",
         "valor_unitario_referencia": None if secret else float(reference),
@@ -719,6 +759,21 @@ def item_export_record(tender: dict, item: dict) -> dict:
 def order_export_record(tender: dict, item: dict, order: dict) -> dict:
     quantity = money(order.get("qtd_empenhada"))
     unit_value = effective_unit_value(item)
+    deadline = export_datetime(order.get("prazo_entrega"))
+    deadline_date = deadline.date() if deadline else None
+    order_status = order.get("status") or "-"
+    if not deadline_date:
+        deadline_status = "Sem vencimento"
+    elif order_status == "Entregue":
+        deadline_status = "Entregue"
+    else:
+        days = (deadline_date - current_business_date()).days
+        deadline_status = f"Atrasada há {abs(days)} dias" if days < 0 else ("Vence hoje" if days == 0 else f"Vence em {days} dias")
+    product = " - ".join(
+        str(value).strip()
+        for value in (item.get("marca"), item.get("modelo"), item.get("referência"))
+        if str(value or "").strip()
+    ) or "-"
     return {
         **tender_export_base(tender),
         "grupo": order.get("group_id") or f"order-{order.get('id')}",
@@ -729,18 +784,18 @@ def order_export_record(tender: dict, item: dict, order: dict) -> dict:
         "marca": item.get("marca") or "-",
         "modelo": item.get("modelo") or "-",
         "referencia": item.get("referência") or "-",
+        "produto": product,
         "qtd_empenhada": float(quantity),
         "valor_unitario": float(unit_value),
         "valor_total": float(quantity * unit_value),
-        "prazo_entrega": export_datetime(order.get("prazo_entrega")),
+        "prazo_entrega": deadline_date,
+        "situacao_prazo": deadline_status,
         "ordem_fornecimento": order.get("ordem_fornecimento") or "-",
         "nota_empenho": order.get("nota_empenho") or "-",
-        "status_encomenda": order.get("status") or "-",
+        "status_encomenda": order_status,
         "pagamento": "Pago" if order.get("pagamento_recebido") else "Pendente",
         "endereco_entrega": order.get("endereço_entrega") or "-",
         "observacao_encomenda": order.get("observação") or "-",
-        "status_item": item.get("status") or "-",
-        "observacao_item": item.get("observação") or "-",
         "_order_id": int(order.get("id") or 0),
     }
 
@@ -759,6 +814,12 @@ def all_export_rows() -> tuple[list[dict], list[dict]]:
 
 def report_total(rows: list[dict], key: str) -> Decimal:
     return sum((money(row.get(key)) for row in rows), Decimal("0"))
+
+
+def export_number_sort(value) -> tuple[int, str]:
+    text = str(value or "")
+    match = re.search(r"\d+", text)
+    return (int(match.group()) if match else 10**9, text.casefold())
 
 
 def sector_export_report(sector: str, selected_ids: set[int] | None = None) -> dict:
@@ -787,6 +848,13 @@ def sector_export_report(sector: str, selected_ids: set[int] | None = None) -> d
 
     if selected_ids is not None:
         rows = [row for row in rows if row[id_key] in selected_ids]
+    if sector in ("won", "proposal", "orders", "finished"):
+        rows.sort(key=lambda row: (
+            str(row.get("pregao") or ""),
+            export_number_sort(row.get("lote")),
+            export_number_sort(row.get("item")),
+            str(row.get("prazo_entrega") or ""),
+        ))
     title = f"LicitaUM - {sector_names[sector]}"
     unique_tenders = {(row["pregao"], row["uasg"]) for row in rows}
     summary = [
@@ -797,11 +865,30 @@ def sector_export_report(sector: str, selected_ids: set[int] | None = None) -> d
     ]
     if sector in ("orders", "finished"):
         summary.insert(2, ("Encomendas agrupadas", len({row["grupo"] for row in rows})))
+    section = {"title": sector_names[sector], "columns": columns, "rows": rows}
+    if sector in ("won", "proposal"):
+        section.update({
+            "group_by": ["pregao", "lote"],
+            "group_context": [("Pregão", "pregao"), ("UASG", "uasg"), ("Órgão", "orgao"), ("Lote", "lote")],
+            "pdf_columns": ITEM_PDF_COLUMNS,
+        })
+    if sector in ("orders", "finished"):
+        section.update({
+            "group_by": ["pregao", "lote"],
+            "group_context": [
+                ("Pregão", "pregao"),
+                ("UASG", "uasg"),
+                ("Órgão", "orgao"),
+                ("Lote", "lote"),
+            ],
+            "pdf_columns": ORDER_PDF_COLUMNS,
+            "highlight_deadline": True,
+        })
     return {
         "title": title,
         "subtitle": "Relatório detalhado gerado a partir dos registros atuais do sistema.",
         "summary": summary,
-        "sections": [{"title": sector_names[sector], "columns": columns, "rows": rows}],
+        "sections": [section],
     }
 
 
@@ -840,13 +927,30 @@ def tender_export_report(tender_id: int) -> dict:
         ("Observação", tender.get("observação") or "-"),
         ("Gerado em", datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")),
     ]
+    item_rows.sort(key=lambda row: (export_number_sort(row.get("lote")), export_number_sort(row.get("item"))))
+    order_rows.sort(key=lambda row: (export_number_sort(row.get("lote")), export_number_sort(row.get("item")), str(row.get("prazo_entrega") or "")))
     return {
         "title": f"LicitaUM - Pregão {tender.get('pregão')}",
         "subtitle": f"Relatório completo da licitação - UASG {tender.get('uasg')}",
         "summary": summary,
         "sections": [
-            {"title": "Itens", "columns": ITEM_EXPORT_COLUMNS, "rows": item_rows},
-            {"title": "Encomendas", "columns": ORDER_EXPORT_COLUMNS, "rows": order_rows},
+            {
+                "title": "Itens",
+                "columns": ITEM_EXPORT_COLUMNS,
+                "rows": item_rows,
+                "group_by": ["pregao", "lote"],
+                "group_context": [("Pregão", "pregao"), ("UASG", "uasg"), ("Órgão", "orgao"), ("Lote", "lote")],
+                "pdf_columns": ITEM_PDF_COLUMNS,
+            },
+            {
+                "title": "Encomendas",
+                "columns": ORDER_EXPORT_COLUMNS,
+                "rows": order_rows,
+                "group_by": ["pregao", "lote"],
+                "group_context": [("Pregão", "pregao"), ("UASG", "uasg"), ("Órgão", "orgao"), ("Lote", "lote")],
+                "pdf_columns": ORDER_PDF_COLUMNS,
+                "highlight_deadline": True,
+            },
             {"title": "Documentos", "columns": DOCUMENT_EXPORT_COLUMNS, "rows": document_rows},
         ],
     }

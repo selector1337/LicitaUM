@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from itertools import groupby
 from pathlib import Path
 from typing import Any
 
@@ -72,20 +73,42 @@ def generate_xlsx(report: dict, path: Path) -> Path:
         sheet.sheet_view.showGridLines = False
         columns = section["columns"]
         rows = section.get("rows", [])
+        last_column = get_column_letter(max(1, len(columns)))
+        sheet.merge_cells(f"A1:{last_column}1")
+        sheet["A1"] = section["title"]
+        sheet["A1"].font = Font(size=16, bold=True, color=white)
+        sheet["A1"].fill = PatternFill("solid", fgColor=navy)
+        sheet["A1"].alignment = Alignment(vertical="center")
+        sheet.row_dimensions[1].height = 30
+        sheet.merge_cells(f"A2:{last_column}2")
+        sheet["A2"] = report.get("subtitle", "")
+        sheet["A2"].font = Font(size=10, color="526575")
+        sheet["A2"].alignment = Alignment(vertical="center", wrap_text=True)
+        header_row = 4
         for col_index, column in enumerate(columns, 1):
-            cell = sheet.cell(1, col_index, column["label"])
+            cell = sheet.cell(header_row, col_index, column["label"])
             cell.font = Font(bold=True, color=white)
             cell.fill = PatternFill("solid", fgColor=blue)
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             cell.border = Border(left=line, right=line, top=line, bottom=line)
-        sheet.row_dimensions[1].height = 30
+        sheet.row_dimensions[header_row].height = 38
 
-        for row_index, record in enumerate(rows, 2):
+        previous_group = None
+        group_fill = False
+        group_keys = section.get("group_by", [])
+        for row_index, record in enumerate(rows, header_row + 1):
+            current_group = tuple(record.get(key) for key in group_keys) if group_keys else None
+            new_group = bool(group_keys) and current_group != previous_group
+            if new_group:
+                group_fill = not group_fill
+                previous_group = current_group
             for col_index, column in enumerate(columns, 1):
                 cell = sheet.cell(row_index, col_index, _value(record.get(column["key"])))
                 cell.alignment = Alignment(vertical="top", wrap_text=column.get("wrap", False))
-                cell.border = Border(bottom=line)
-                if row_index % 2 == 0:
+                cell.border = Border(top=Side(style="medium", color=blue) if new_group else Side(), bottom=line)
+                if group_keys:
+                    cell.fill = PatternFill("solid", fgColor="EEF5FA" if group_fill else "FFFFFF")
+                elif row_index % 2 == 1:
                     cell.fill = PatternFill("solid", fgColor="F7FAFC")
                 kind = column.get("kind")
                 if kind == "currency" and isinstance(cell.value, (int, float)):
@@ -97,8 +120,28 @@ def generate_xlsx(report: dict, path: Path) -> Path:
                 elif kind == "datetime" and isinstance(cell.value, (date, datetime)):
                     cell.number_format = DATETIME_FORMAT
 
-        sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{max(1, len(rows) + 1)}"
+            if section.get("highlight_deadline"):
+                status = str(record.get("situacao_prazo") or "")
+                for key in ("prazo_entrega", "situacao_prazo"):
+                    column_index = next((index for index, column in enumerate(columns, 1) if column["key"] == key), None)
+                    if not column_index:
+                        continue
+                    cell = sheet.cell(row_index, column_index)
+                    if status.startswith("Atrasada"):
+                        cell.fill = PatternFill("solid", fgColor="FDE8E7")
+                        cell.font = Font(bold=True, color="B42318")
+                    elif status.startswith("Vence"):
+                        cell.fill = PatternFill("solid", fgColor="FFF4D6")
+                        cell.font = Font(bold=True, color="8A5A00")
+
+        sheet.freeze_panes = f"A{header_row + 1}"
+        sheet.auto_filter.ref = f"A{header_row}:{last_column}{max(header_row, len(rows) + header_row)}"
+        sheet.auto_filter.add_sort_condition(f"A{header_row + 1}:A{max(header_row + 1, len(rows) + header_row)}")
+        sheet.sheet_properties.pageSetUpPr.fitToPage = True
+        sheet.page_setup.orientation = "landscape"
+        sheet.page_setup.fitToWidth = 1
+        sheet.page_setup.fitToHeight = 0
+        sheet.print_title_rows = f"1:{header_row}"
         for col_index, column in enumerate(columns, 1):
             samples = [str(column["label"])] + [str(_value(record.get(column["key"]))) for record in rows[:200]]
             longest = max((len(sample) for sample in samples), default=10)
@@ -107,7 +150,7 @@ def generate_xlsx(report: dict, path: Path) -> Path:
 
         if rows:
             table_name = f"LicitaUM{section_index}"
-            table = Table(displayName=table_name, ref=f"A1:{get_column_letter(len(columns))}{len(rows) + 1}")
+            table = Table(displayName=table_name, ref=f"A{header_row}:{last_column}{len(rows) + header_row}")
             table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True, showFirstColumn=False, showLastColumn=False)
             sheet.add_table(table)
 
@@ -140,19 +183,19 @@ def generate_pdf(report: dict, path: Path) -> Path:
     try:
         from reportlab.lib import colors
         from reportlab.lib.enums import TA_LEFT
-        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.pagesizes import A3, landscape
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import mm
-        from reportlab.platypus import KeepTogether, LongTable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.platypus import CondPageBreak, LongTable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     except ImportError as exc:
         raise RuntimeError("A exportação PDF requer reportlab. Execute: pip install -r requirements.txt") from exc
 
-    page_size = landscape(A4)
+    page_size = landscape(A3)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle("LicitaUMTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=18, leading=22, textColor=colors.HexColor("#12304A"), alignment=TA_LEFT, spaceAfter=3 * mm)
     subtitle_style = ParagraphStyle("LicitaUMSubtitle", parent=styles["Normal"], fontSize=8.5, leading=11, textColor=colors.HexColor("#526575"), spaceAfter=5 * mm)
     section_style = ParagraphStyle("LicitaUMSection", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=12, leading=15, textColor=colors.HexColor("#0757A8"), spaceBefore=3 * mm, spaceAfter=2 * mm)
-    cell_style = ParagraphStyle("LicitaUMCell", parent=styles["Normal"], fontName="Helvetica", fontSize=6.4, leading=8, textColor=colors.HexColor("#10202A"))
+    cell_style = ParagraphStyle("LicitaUMCell", parent=styles["Normal"], fontName="Helvetica", fontSize=6.2, leading=7.6, textColor=colors.HexColor("#10202A"))
     header_style = ParagraphStyle("LicitaUMHeader", parent=cell_style, fontName="Helvetica-Bold", textColor=colors.white, alignment=TA_LEFT)
 
     def footer(canvas, document):
@@ -186,44 +229,90 @@ def generate_pdf(report: dict, path: Path) -> Path:
         story.extend([summary_table, Spacer(1, 5 * mm)])
 
     available_width = page_size[0] - 24 * mm
-    for section_index, section in enumerate(report.get("sections", [])):
+    pdf_sections = [section for section in report.get("sections", []) if section.get("rows")]
+    for section_index, section in enumerate(pdf_sections):
         if section_index:
             story.append(PageBreak())
         story.append(Paragraph(section["title"], section_style))
         rows = section.get("rows", [])
-        if not rows:
-            story.append(Paragraph("Nenhum registro encontrado.", subtitle_style))
-            continue
-        groups = _column_groups(section["columns"])
-        for group_index, columns in enumerate(groups, 1):
-            if len(groups) > 1:
-                story.append(Paragraph(f"{section['title']} - informações {group_index} de {len(groups)}", subtitle_style))
-            width_units = [max(1, column.get("pdf_weight", 1)) for column in columns]
-            unit_total = sum(width_units)
-            col_widths = [available_width * unit / unit_total for unit in width_units]
-            table_rows = [[Paragraph(_pdf_text(column["label"]), header_style) for column in columns]]
-            for record in rows:
-                values = []
-                for column in columns:
-                    value = record.get(column["key"])
-                    if column.get("kind") == "currency" and isinstance(value, (int, float, Decimal)):
-                        value = "R$ " + _pdf_text(value)
-                    values.append(Paragraph(_pdf_text(value), cell_style))
-                table_rows.append(values)
-            table = LongTable(table_rows, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
-            table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0757A8")),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F4F8FA")]),
-                ("GRID", (0, 0), (-1, -1), .25, colors.HexColor("#C9D5DB")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 3),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ]))
-            story.append(table)
-            if group_index < len(groups):
-                story.extend([PageBreak(), Paragraph(section["title"], section_style)])
+        pdf_columns = section.get("pdf_columns")
+        column_groups = [pdf_columns] if pdf_columns else _column_groups(section["columns"], maximum=12)
+        group_keys = section.get("group_by", [])
+        grouped_records = []
+        if group_keys and pdf_columns:
+            key_function = lambda record: tuple(record.get(key) for key in group_keys)
+            grouped_records = [(key, list(records)) for key, records in groupby(rows, key=key_function)]
+
+        report_groups = grouped_records if grouped_records else [(None, rows)]
+        for record_group_index, (_, records) in enumerate(report_groups):
+            if record_group_index:
+                story.append(Spacer(1, 4 * mm))
+            for column_group_index, columns in enumerate(column_groups, 1):
+                if len(column_groups) > 1:
+                    story.append(Paragraph(f"{section['title']} - informações {column_group_index} de {len(column_groups)}", subtitle_style))
+                if grouped_records:
+                    story.append(CondPageBreak(30 * mm))
+                width_units = [max(1, column.get("pdf_weight", 1)) for column in columns]
+                unit_total = sum(width_units)
+                col_widths = [available_width * unit / unit_total for unit in width_units]
+                table_rows = []
+                header_row = 0
+                data_start = 1
+                if grouped_records:
+                    context = " &nbsp;&nbsp; | &nbsp;&nbsp; ".join(
+                        f"<b>{_pdf_text(label)}:</b> {_pdf_text(records[0].get(key))}"
+                        for label, key in section.get("group_context", [])
+                    )
+                    table_rows.append([Paragraph(context, header_style)] + [""] * (len(columns) - 1))
+                    header_row = 1
+                    data_start = 2
+                table_rows.append([Paragraph(_pdf_text(column["label"]), header_style) for column in columns])
+                for record in records:
+                    values = []
+                    for column in columns:
+                        value = record.get(column["key"])
+                        if column.get("kind") == "currency" and isinstance(value, (int, float, Decimal)):
+                            value = "R$ " + _pdf_text(value)
+                        values.append(Paragraph(_pdf_text(value), cell_style))
+                    table_rows.append(values)
+                table = LongTable(table_rows, colWidths=col_widths, repeatRows=data_start, hAlign="LEFT")
+                table_commands = [
+                    ("BACKGROUND", (0, header_row), (-1, header_row), colors.HexColor("#0757A8")),
+                    ("ROWBACKGROUNDS", (0, data_start), (-1, -1), [colors.white, colors.HexColor("#F4F8FA")]),
+                    ("GRID", (0, 0), (-1, -1), .25, colors.HexColor("#C9D5DB")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ]
+                if grouped_records:
+                    table_commands.extend([
+                        ("SPAN", (0, 0), (-1, 0)),
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#12304A")),
+                        ("TOPPADDING", (0, 0), (-1, 0), 5),
+                        ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
+                    ])
+                if section.get("highlight_deadline"):
+                    deadline_index = next((index for index, column in enumerate(columns) if column["key"] == "prazo_entrega"), None)
+                    status_index = next((index for index, column in enumerate(columns) if column["key"] == "situacao_prazo"), None)
+                    for index, record in enumerate(records, data_start):
+                        status = str(record.get("situacao_prazo") or "")
+                        if status.startswith("Atrasada"):
+                            for column_index in (deadline_index, status_index):
+                                if column_index is not None:
+                                    table_commands.extend([
+                                        ("BACKGROUND", (column_index, index), (column_index, index), colors.HexColor("#FDE8E7")),
+                                        ("TEXTCOLOR", (column_index, index), (column_index, index), colors.HexColor("#B42318")),
+                                    ])
+                        elif status.startswith("Vence"):
+                            for column_index in (deadline_index, status_index):
+                                if column_index is not None:
+                                    table_commands.append(("BACKGROUND", (column_index, index), (column_index, index), colors.HexColor("#FFF4D6")))
+                table.setStyle(TableStyle(table_commands))
+                story.append(table)
+                if column_group_index < len(column_groups):
+                    story.extend([PageBreak(), Paragraph(section["title"], section_style)])
 
     document.build(story, onFirstPage=footer, onLaterPages=footer)
     return path
