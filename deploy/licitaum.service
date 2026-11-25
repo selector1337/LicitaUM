@@ -12,6 +12,7 @@ Environment=LICITAUM_PORT=8765
 ExecStart=/opt/licitaum/.venv/bin/python /opt/licitaum/server.py
 Restart=always
 RestartSec=3
+LimitNOFILE=8192
 
 [Install]
 WantedBy=multi-user.target

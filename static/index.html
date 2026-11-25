@@ -5,56 +5,134 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LicitaUM</title>
     <link rel="icon" href="/static/licitaum-mark.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=7" />
   </head>
   <body>
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("licitaum-theme");
+          var dark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+          if (dark) document.body.classList.add("dark");
+          if (localStorage.getItem("licitaum-sidebar") === "collapsed") document.body.classList.add("sidebar-collapsed");
+        } catch (e) {}
+      })();
+    </script>
+
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></symbol>
+        <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><path d="M12 13v3l2 1.2"/></symbol>
+        <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7.5V12l3 2"/></symbol>
+        <symbol id="i-send" viewBox="0 0 24 24"><path d="M21.5 2.5 11 13"/><path d="m21.5 2.5-6.5 19-4-8.5-8.5-4z"/></symbol>
+        <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/><path d="M12 14v4M8.5 21h7M10 18h4"/></symbol>
+        <symbol id="i-package" viewBox="0 0 24 24"><path d="m12 2.5 8.5 4.75v9.5L12 21.5l-8.5-4.75v-9.5z"/><path d="m3.5 7.25 8.5 4.75 8.5-4.75M12 12v9.5"/><path d="m7.75 4.9 8.5 4.75"/></symbol>
+        <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></symbol>
+        <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></symbol>
+        <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+        <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+        <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></symbol>
+        <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+        <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="3.5" width="18" height="17" rx="2.5"/><path d="M9 3.5v17"/><path d="m15.5 10-2 2 2 2"/></symbol>
+        <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.5v.01"/></symbol>
+        <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5v.01"/></symbol>
+        <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M5.5 7l1 12.5A2 2 0 0 0 8.5 21.5h7a2 2 0 0 0 2-2L18.5 7M9 7V4h6v3"/></symbol>
+        <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5M11 18l-6-6 6-6"/></symbol>
+        <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5M8.5 13h7M8.5 17h5"/></symbol>
+        <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+        <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+        <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
+        <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
+      </defs>
+    </svg>
+
     <section id="loginScreen" class="login-screen">
-      <form id="loginForm" class="login-card">
-        <div class="login-logo">
-          <img class="logo-full" src="/static/licitaum-logo.svg" alt="LicitaUM" />
+      <aside class="login-brand">
+        <div class="login-brand-top">
+          <img class="brand-mark" src="/static/licitaum-mark.svg" alt="" />
+          <span class="brand-text">Licita<b>UM</b></span>
         </div>
-        <label>Login <input name="email" type="email" required autocomplete="username" placeholder="seu@email.com" /></label>
-        <label>Senha <input name="senha" type="password" required autocomplete="current-password" placeholder="Digite sua senha" /></label>
-        <button class="primary">Entrar</button>
-      </form>
+        <div class="login-pitch">
+          <h1>Do edital ao pagamento, em um só lugar.</h1>
+          <p>Acompanhe pregões, precifique itens, gere propostas e controle empenhos e entregas sem planilhas soltas.</p>
+          <ul>
+            <li><svg class="icon"><use href="#i-check"/></svg>Agenda de licitações com contagem regressiva</li>
+            <li><svg class="icon"><use href="#i-check"/></svg>Propostas em DOCX e PDF a partir do seu modelo</li>
+            <li><svg class="icon"><use href="#i-check"/></svg>Encomendas com prazos e alertas de atraso</li>
+          </ul>
+        </div>
+        <small>LicitaUM · gestão de licitações</small>
+      </aside>
+      <div class="login-panel">
+        <form id="loginForm" class="login-card">
+          <div class="login-logo">
+            <img class="brand-mark" src="/static/licitaum-mark.svg" alt="" />
+            <div>
+              <strong>Entrar</strong>
+              <span>Use seu e-mail e senha de acesso.</span>
+            </div>
+          </div>
+          <label>E-mail <input name="email" type="email" required autocomplete="username" placeholder="seu@email.com" /></label>
+          <label>Senha <input name="senha" type="password" required autocomplete="current-password" placeholder="Digite sua senha" /></label>
+          <button class="primary">Entrar</button>
+        </form>
+      </div>
     </section>
 
     <aside class="sidebar">
       <div class="brand">
-        <strong><img class="brand-mark" src="/static/licitaum-mark.svg" alt="" /><span class="brand-text"> LicitaUM</span></strong>
+        <img class="brand-mark" src="/static/licitaum-mark.svg" alt="" />
+        <span class="brand-text">Licita<b>UM</b></span>
       </div>
       <nav>
-        <button class="nav active" data-view="dashboard"><span class="nav-icon">▥</span><span class="nav-text">Painel</span></button>
-        <button class="nav" data-view="future"><span class="nav-icon">◴</span><span class="nav-text">Licitações Futuras</span></button>
-        <button class="nav" data-view="past"><span class="nav-icon">◷</span><span class="nav-text">Licitações Passadas</span></button>
-        <button class="nav" data-view="proposalItems"><span class="nav-icon">✉</span><span class="nav-text">Itens em Proposta</span></button>
-        <button class="nav" data-view="won"><span class="nav-icon">✓</span><span class="nav-text">Itens Ganhos</span></button>
-        <button class="nav" data-view="orders"><span class="nav-icon">▤</span><span class="nav-text">Encomendas</span></button>
-        <button class="nav" data-view="finished"><span class="nav-icon">◎</span><span class="nav-text">Finalizadas</span></button>
-        <button class="nav" data-view="users"><span class="nav-icon">♙</span><span class="nav-text">Usuários</span></button>
+        <span class="nav-label">Visão geral</span>
+        <button class="nav active" data-view="dashboard" title="Painel"><svg class="icon"><use href="#i-dashboard"/></svg><span class="nav-text">Painel</span></button>
+        <span class="nav-label">Licitações</span>
+        <button class="nav" data-view="future" title="Licitações futuras"><svg class="icon"><use href="#i-calendar"/></svg><span class="nav-text">Futuras</span><span class="nav-badge" data-badge="future"></span></button>
+        <button class="nav" data-view="past" title="Licitações passadas"><svg class="icon"><use href="#i-history"/></svg><span class="nav-text">Passadas</span></button>
+        <span class="nav-label">Itens</span>
+        <button class="nav" data-view="proposalItems" title="Itens em proposta"><svg class="icon"><use href="#i-send"/></svg><span class="nav-text">Em proposta</span><span class="nav-badge" data-badge="proposalItems"></span></button>
+        <button class="nav" data-view="won" title="Itens ganhos"><svg class="icon"><use href="#i-trophy"/></svg><span class="nav-text">Ganhos</span><span class="nav-badge" data-badge="won"></span></button>
+        <span class="nav-label">Execução</span>
+        <button class="nav" data-view="orders" title="Encomendas"><svg class="icon"><use href="#i-package"/></svg><span class="nav-text">Encomendas</span><span class="nav-badge" data-badge="orders"></span></button>
+        <button class="nav" data-view="finished" title="Finalizadas"><svg class="icon"><use href="#i-check-circle"/></svg><span class="nav-text">Finalizadas</span></button>
+        <span class="nav-label">Administração</span>
+        <button class="nav" data-view="users" title="Usuários"><svg class="icon"><use href="#i-users"/></svg><span class="nav-text">Usuários</span></button>
       </nav>
-      <button id="themeToggle" class="theme-pill" title="Alternar tema"><span class="nav-icon">☾</span><span class="nav-text">Modo escuro</span></button>
+      <div class="sidebar-footer">
+        <button id="sidebarToggle" class="nav" type="button" title="Recolher menu"><svg class="icon"><use href="#i-sidebar"/></svg><span class="nav-text">Recolher menu</span></button>
+      </div>
     </aside>
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
     <main>
       <header class="topbar">
-        <div class="topbar-title">
-          <img class="brand-mark topbar-logo" src="/static/licitaum-mark.svg" alt="" />
-          <div>
-          <h1>LicitaUM</h1>
-          <p>Pregões, preços, propostas, empenhos, atas e contratos em um só lugar.</p>
-          </div>
+        <div class="crumbs">
+          <button id="mobileMenu" type="button" class="icon-btn mobile-only" aria-label="Abrir menu"><svg class="icon"><use href="#i-menu"/></svg></button>
+          <span>LicitaUM</span>
+          <svg class="icon"><use href="#i-chevron-right"/></svg>
+          <strong id="crumbCurrent">Painel</strong>
         </div>
         <div class="top-actions">
+          <button id="themeToggle" type="button" class="icon-btn" title="Alternar tema claro/escuro" aria-label="Alternar tema">
+            <svg class="icon theme-icon-moon"><use href="#i-moon"/></svg>
+            <svg class="icon theme-icon-sun"><use href="#i-sun"/></svg>
+          </button>
+          <button id="newTender" class="primary"><svg class="icon"><use href="#i-plus"/></svg><span class="btn-label">Nova licitação</span></button>
+          <span class="top-divider"></span>
           <div class="account-menu">
             <div class="account-avatar" id="accountAvatar">A</div>
-            <div>
+            <div class="account-info">
               <strong id="accountName">Administrador</strong>
               <span id="accountEmail">admin@licitaum.local</span>
             </div>
-            <button type="button" onclick="logout()">Sair</button>
+            <button type="button" class="icon-btn" title="Sair" aria-label="Sair" onclick="logout()"><svg class="icon"><use href="#i-logout"/></svg></button>
           </div>
-          <button id="newTender" class="primary">Nova licitação</button>
         </div>
       </header>
 
@@ -67,12 +145,14 @@
             <p>Organizadas por data e horário, para acompanhar o que ainda vamos participar.</p>
           </div>
           <div class="filter-stack">
-            <input id="futureSearch" placeholder="Filtrar por pregão, UASG ou órgão" />
+            <input id="futureSearch" type="search" placeholder="Buscar por pregão, UASG ou órgão" />
             <select id="futurePlatform">
               <option value="">Todas as plataformas</option>
               <option value="ComprasNet">ComprasNet</option>
               <option value="FIRJAN">FIRJAN</option>
             </select>
+            <button type="button" id="futureClear" class="link-btn" hidden onclick="clearFutureFilters()">Limpar filtros</button>
+            <span class="result-count" id="futureCount"></span>
           </div>
         </div>
         <div id="futureList" class="timeline"></div>
@@ -85,17 +165,33 @@
             <p>Histórico organizado por data e horário.</p>
           </div>
           <div class="filter-stack">
-            <input id="pastSearch" placeholder="Pregão, UASG, órgão ou produto" />
+            <input id="pastSearch" type="search" placeholder="Buscar por pregão, UASG, órgão ou produto" />
             <select id="pastPlatform">
               <option value="">Todas as plataformas</option>
               <option value="ComprasNet">ComprasNet</option>
               <option value="FIRJAN">FIRJAN</option>
             </select>
-            <div class="grid3">
-              <input id="pastYear" placeholder="Ano" inputmode="numeric" />
-              <input id="pastMonth" placeholder="Mês" inputmode="numeric" />
-              <input id="pastDate" type="date" />
-            </div>
+            <select id="pastYear" aria-label="Ano">
+              <option value="">Todos os anos</option>
+            </select>
+            <select id="pastMonth" aria-label="Mês">
+              <option value="">Todos os meses</option>
+              <option value="01">Janeiro</option>
+              <option value="02">Fevereiro</option>
+              <option value="03">Março</option>
+              <option value="04">Abril</option>
+              <option value="05">Maio</option>
+              <option value="06">Junho</option>
+              <option value="07">Julho</option>
+              <option value="08">Agosto</option>
+              <option value="09">Setembro</option>
+              <option value="10">Outubro</option>
+              <option value="11">Novembro</option>
+              <option value="12">Dezembro</option>
+            </select>
+            <input id="pastDate" type="date" title="Data exata" aria-label="Data exata" />
+            <button type="button" id="pastClear" class="link-btn" hidden onclick="clearPastFilters()">Limpar filtros</button>
+            <span class="result-count" id="pastCount"></span>
           </div>
         </div>
         <div id="pastList" class="timeline"></div>
@@ -261,6 +357,7 @@
 
     <dialog id="tenderDialog">
       <form method="dialog" id="tenderForm">
+        <button type="button" class="dialog-close" data-close aria-label="Fechar">×</button>
         <h2>Licitação</h2>
         <input type="hidden" name="id" />
         <div class="grid3">
@@ -290,6 +387,7 @@
 
     <dialog id="orderDialog">
       <form method="dialog" id="orderForm">
+        <button type="button" class="dialog-close" data-close aria-label="Fechar">×</button>
         <h2>Encomenda / empenho</h2>
         <p id="orderDialogSubtitle" class="dialog-subtitle"></p>
         <input type="hidden" name="id" />
@@ -375,8 +473,9 @@
 
     <dialog id="proposalLinksDialog">
       <form method="dialog" id="proposalLinksForm">
+        <button type="button" class="dialog-close" data-close aria-label="Fechar">×</button>
         <h2>Links para proposta</h2>
-        <p>Informe o link do fornecedor apenas para os itens selecionados.</p>
+        <p class="dialog-subtitle">Informe o link do fornecedor apenas para os itens selecionados.</p>
         <div id="proposalLinksFields" class="proposal-link-fields"></div>
         <footer>
           <button type="button" data-close>Cancelar</button>
@@ -415,6 +514,30 @@
       </form>
     </dialog>
 
-    <script src="/static/app.js"></script>
+    <dialog id="confirmDialog" class="confirm-dialog">
+      <form method="dialog" id="confirmForm">
+        <div class="confirm-icon"><svg class="icon"><use href="#i-alert"/></svg></div>
+        <h2 id="confirmTitle">Confirmar</h2>
+        <p id="confirmMessage"></p>
+        <label id="confirmInputLabel" hidden><span id="confirmInputText"></span><input id="confirmInput" autocomplete="off" /></label>
+        <footer>
+          <button type="button" id="confirmCancel">Cancelar</button>
+          <button type="submit" id="confirmOk" class="primary">Confirmar</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <div class="selection-bar" id="selectionBar" hidden>
+      <span class="selection-count"><strong id="selectionCount">0</strong> <span id="selectionLabel">itens selecionados</span></span>
+      <span class="selection-total" id="selectionTotal"></span>
+      <span class="selection-divider"></span>
+      <button type="button" class="ghost" onclick="clearItemSelection()">Limpar</button>
+      <button type="button" onclick="prepareProposal('docx')"><svg class="icon"><use href="#i-file"/></svg>Gerar DOCX</button>
+      <button type="button" class="primary" onclick="prepareProposal('pdf')"><svg class="icon"><use href="#i-file"/></svg>Gerar PDF</button>
+    </div>
+
+    <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+
+    <script src="/static/app.js?v=7"></script>
   </body>
 </html>

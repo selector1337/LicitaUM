@@ -45,6 +45,149 @@ const escapeHtml = (value) => String(value ?? "")
   .replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;")
   .replace(/'/g, "&#039;");
+const svgIcon = (id) => `<svg class="icon"><use href="#${id}"/></svg>`;
+
+const TOAST_ICONS = { success: "i-check", error: "i-x", warn: "i-alert", info: "i-info" };
+
+function toast(message, type = "warn", timeout) {
+  const stack = $("#toastStack");
+  if (!stack) return;
+  const kind = TOAST_ICONS[type] ? type : "info";
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.setAttribute("role", kind === "error" ? "alert" : "status");
+  el.innerHTML = `
+    <span class="toast-icon">${svgIcon(TOAST_ICONS[kind])}</span>
+    <div class="toast-body"></div>
+    <button type="button" class="toast-close" aria-label="Fechar">×</button>
+  `;
+  $(".toast-body", el).textContent = String(message ?? "");
+  const remove = () => {
+    if (!el.isConnected) return;
+    el.classList.add("leaving");
+    setTimeout(() => el.remove(), 180);
+  };
+  $(".toast-close", el).addEventListener("click", remove);
+  stack.appendChild(el);
+  while (stack.children.length > 4) stack.firstElementChild.remove();
+  setTimeout(remove, timeout ?? (kind === "error" ? 7000 : 4500));
+}
+
+function openConfirm({ title = "Confirmar", message = "", confirmLabel = "Confirmar", danger = false, input = null }) {
+  const dialog = $("#confirmDialog");
+  if (!dialog) return Promise.resolve(input ? window.prompt(message) : window.confirm(message));
+  const field = $("#confirmInput");
+  dialog.classList.toggle("is-danger", danger);
+  $(".confirm-icon", dialog).innerHTML = svgIcon(danger ? "i-trash" : input ? "i-edit" : "i-info");
+  $("#confirmTitle").textContent = title;
+  $("#confirmMessage").textContent = message;
+  $("#confirmMessage").hidden = !message;
+  $("#confirmInputLabel").hidden = !input;
+  $("#confirmInputText").textContent = input?.label || "";
+  field.value = input?.value || "";
+  field.placeholder = input?.placeholder || "";
+  field.required = Boolean(input);
+  const ok = $("#confirmOk");
+  ok.textContent = confirmLabel;
+  ok.className = danger ? "danger-solid" : "primary";
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      $("#confirmForm").onsubmit = null;
+      $("#confirmCancel").onclick = null;
+      dialog.oncancel = null;
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+    $("#confirmForm").onsubmit = (event) => {
+      event.preventDefault();
+      finish(input ? (field.value.trim() || null) : true);
+    };
+    $("#confirmCancel").onclick = () => finish(input ? null : false);
+    dialog.oncancel = (event) => {
+      event.preventDefault();
+      finish(input ? null : false);
+    };
+    dialog.showModal();
+    (input ? field : $("#confirmCancel")).focus();
+  });
+}
+
+function confirmAction(message) {
+  const isRemoval = /^Remover/i.test(message);
+  return openConfirm({
+    title: isRemoval ? "Remover da etapa atual?" : "Confirmar exclusão",
+    message,
+    confirmLabel: isRemoval ? "Remover" : "Apagar",
+    danger: true,
+  });
+}
+
+function promptDialog(title, label, value = "") {
+  return openConfirm({ title, confirmLabel: "Continuar", input: { label, value } });
+}
+
+const VIEW_LABELS = {
+  dashboard: "Painel",
+  future: "Licitações futuras",
+  past: "Licitações passadas",
+  proposalItems: "Itens em proposta",
+  won: "Itens ganhos",
+  orders: "Encomendas",
+  finished: "Finalizadas",
+  users: "Usuários",
+  detail: "Licitação",
+};
+
+function setCrumb(text) {
+  const crumb = $("#crumbCurrent");
+  if (crumb) crumb.textContent = text;
+  document.title = text && text !== "Painel" ? `${text} · LicitaUM` : "LicitaUM";
+}
+
+function setBadge(name, value, alertState = false) {
+  const badge = $(`.nav-badge[data-badge="${name}"]`);
+  if (!badge) return;
+  badge.textContent = value ? String(value) : "";
+  badge.classList.toggle("alert", Boolean(alertState && value));
+}
+
+function updateNavBadges() {
+  const now = appNow();
+  const future = state.tenders.filter((t) => {
+    const date = isoDate(t.data_limite);
+    return date ? date >= now : t.status === "Futura licitação";
+  }).length;
+  const items = flattenItems();
+  const proposal = items.filter((i) => i.status === "Proposta enviada").length;
+  const won = items.filter((i) => WIN_STATUSES.includes(i.status) && pendingOrderQty(i) > 0).length;
+  const openGroups = groupOrderRows(flattenOrders().filter((i) => i.status_encomenda !== "Entregue"));
+  const lateGroups = openGroups.filter((group) => deliveryStatus(group.items[0]).cls === "late").length;
+  setBadge("future", future);
+  setBadge("proposalItems", proposal);
+  setBadge("won", won);
+  setBadge("orders", lateGroups || openGroups.length, lateGroups > 0);
+  const ordersBadge = $('.nav-badge[data-badge="orders"]');
+  if (ordersBadge) ordersBadge.title = lateGroups ? `${lateGroups} encomenda(s) atrasada(s)` : "";
+}
+
+function setSidebarOpen(open) {
+  document.body.classList.toggle("sidebar-open", open);
+}
+
+function bindShell() {
+  $("#sidebarToggle")?.addEventListener("click", () => {
+    const collapsed = document.body.classList.toggle("sidebar-collapsed");
+    localStorage.setItem("licitaum-sidebar", collapsed ? "collapsed" : "expanded");
+    $("#sidebarToggle").title = collapsed ? "Expandir menu" : "Recolher menu";
+    $("#sidebarToggle .nav-text").textContent = collapsed ? "Expandir menu" : "Recolher menu";
+  });
+  $("#mobileMenu")?.addEventListener("click", () => setSidebarOpen(!document.body.classList.contains("sidebar-open")));
+  $("#sidebarBackdrop")?.addEventListener("click", () => setSidebarOpen(false));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setSidebarOpen(false);
+  });
+}
+
 const isoDate = (value) => {
   if (!value) return null;
   if (value instanceof Date) return new Date(value.getTime());
@@ -341,6 +484,10 @@ function searchUrl(site, item) {
   return urls[site];
 }
 
+function searchButton(item) {
+  return `<button type="button" class="search-btn" data-marca="${escapeAttr(item.marca || "")}" data-modelo="${escapeAttr(item.modelo || item.referência || "")}" aria-haspopup="menu" onclick="openSearchMenu(this)">${svgIcon("i-search")}Pesquisar</button>`;
+}
+
 function searchLinks(item) {
   return `
     <div class="search-links">
@@ -395,19 +542,49 @@ function renderDashboard() {
     .filter((item) => Number(item.pagamento_recebido || 0) && inSelectedMonth(item, "order"))
     .reduce((sum, item) => sum + itemBusinessTotal(item), 0);
 
+  const next = future[0];
+  const lateCount = groupOrderRows(orders.filter((i) => isoDate(i.prazo_entrega) && isoDate(i.prazo_entrega) < now)).length;
+  const greeting = now.getHours() < 12 ? "Bom dia" : now.getHours() < 18 ? "Boa tarde" : "Boa noite";
+  const firstName = String(state.account?.nome || "").trim().split(/\s+/)[0];
+
   $("#dashboard").innerHTML = `
-    <div class="dashboard-overview">
-      <div class="metrics operational-metrics">
-        <div class="metric"><span>Próximas licitações</span><strong>${future.length}</strong></div>
-        <div class="metric countdown-metric"><span>Próxima licitação em</span><strong class="countdown" data-deadline="${future[0]?.data_limite || ""}">${countdownLabel(future[0]?.data_limite)}</strong></div>
+    <div class="section-head dashboard-head">
+      <div>
+        <h2>${greeting}${firstName ? `, ${escapeHtml(firstName)}` : ""}</h2>
+        <p>${capitalize(now.toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }))} · ${future.length ? `${future.length} licitaç${future.length === 1 ? "ão" : "ões"} pela frente` : "nenhuma licitação agendada"}${lateCount ? ` · <b class="text-bad">${lateCount} encomenda${lateCount === 1 ? "" : "s"} atrasada${lateCount === 1 ? "" : "s"}</b>` : ""}</p>
       </div>
+    </div>
+
+    <div class="dash-top">
+      ${next ? `
+        <article class="next-tender" onclick="openDetail(${next.id})" role="button" tabindex="0" onkeydown="if(event.key==='Enter')openDetail(${next.id})">
+          <div class="next-tender-label">${svgIcon("i-calendar")}Próxima licitação</div>
+          <div class="next-tender-countdown countdown" data-deadline="${next.data_limite}">${countdownLabel(next.data_limite)}</div>
+          <div class="next-tender-when">${capitalize(isoDate(next.data_limite).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" }))} às ${isoDate(next.data_limite).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</div>
+          <div class="next-tender-title">
+            <strong>Pregão ${escapeHtml(next.pregão)}</strong>
+            <span>${escapeHtml(next.órgão || "")}</span>
+          </div>
+          <div class="meta">
+            <span class="tag">${selectedTenderItems(next).length} itens</span>
+            <span class="tag ${pricesComplete(next) ? "ok" : "warn"}">${pricesComplete(next) ? "Preços completos" : "Preços pendentes"}</span>
+          </div>
+        </article>
+      ` : `
+        <article class="next-tender empty">
+          <div class="next-tender-label">${svgIcon("i-calendar")}Próxima licitação</div>
+          <strong>Nenhuma licitação agendada</strong>
+          <p>Cadastre a próxima disputa para acompanhar a contagem regressiva aqui.</p>
+          <button type="button" class="primary" onclick="event.stopPropagation(); document.getElementById('newTender').click()">${svgIcon("i-plus")}Nova licitação</button>
+        </article>
+      `}
       <section class="financial-overview">
         <header>
-          <div><small>Resumo financeiro</small><strong>${monthLabel(selectedMonth)}</strong></div>
+          <div><small>Resumo financeiro</small><strong>${capitalize(monthLabel(selectedMonth))}</strong></div>
           <label>Período
             <select id="dashboardMonth">
               <option value="" ${selectedMonth === "" ? "selected" : ""}>Todos os meses</option>
-              ${monthOptions.map((option) => `<option value="${option}" ${selectedMonth === option ? "selected" : ""}>${monthLabel(option)}</option>`).join("")}
+              ${monthOptions.map((option) => `<option value="${option}" ${selectedMonth === option ? "selected" : ""}>${capitalize(monthLabel(option))}</option>`).join("")}
             </select>
           </label>
         </header>
@@ -418,24 +595,200 @@ function renderDashboard() {
         </div>
       </section>
     </div>
-    <div class="dashboard-grid">
-      <div class="alert-stack">
-        <h2>Próximas licitações</h2>
-        ${future.slice(0, 5).map((t) => alertTender(t)).join("") || `<div class="alert-card">Nenhuma licitação futura com data cadastrada.</div>`}
-      </div>
-      <div class="alert-stack">
-        <h2>Encomendas atrasadas</h2>
-        ${riskyOrders.map(orderAlert).join("") || `<div class="alert-card ok">Nenhuma encomenda atrasada.</div>`}
-        <h2>Próximas encomendas a vencer</h2>
-        ${upcomingOrders.map(orderAlert).join("") || `<div class="alert-card ok">Nenhuma encomenda próxima do vencimento.</div>`}
-      </div>
+
+    <section class="dash-section">
+      <header class="dash-section-head">
+        <div><h3>Funil do processo</h3><p>Onde estão os itens e as encomendas agora, do cadastro ao pagamento.</p></div>
+      </header>
+      ${pipelineStrip(activeItems, allOrders)}
+    </section>
+
+    <div class="dash-split">
+      <section class="dash-card">
+        ${monthlyChart(activeItems, now, state.dashboardMonth || "")}
+      </section>
+      <section class="dash-card">
+        <header class="dash-section-head">
+          <div><h3>Agenda</h3><p>Próximas licitações por data.</p></div>
+          <button type="button" class="link-btn" onclick="showView('future')">Ver todas</button>
+        </header>
+        <div class="agenda">
+          ${future.slice(0, 6).map(agendaRow).join("") || `<div class="mini-empty">${svgIcon("i-calendar")}Nenhuma licitação futura com data cadastrada.</div>`}
+        </div>
+      </section>
+    </div>
+
+    <div class="dash-split even">
+      <section>
+        <header class="dash-section-head">
+          <div><h3>Encomendas atrasadas ${riskyOrders.length ? `<span class="tab-count bad">${riskyOrders.length}</span>` : ""}</h3></div>
+        </header>
+        <div class="alert-stack">
+          ${riskyOrders.map(orderAlert).join("") || `<div class="mini-empty ok">${svgIcon("i-check-circle")}Nenhuma encomenda atrasada.</div>`}
+        </div>
+      </section>
+      <section>
+        <header class="dash-section-head">
+          <div><h3>Próximas a vencer</h3></div>
+          <button type="button" class="link-btn" onclick="showView('orders')">Ver encomendas</button>
+        </header>
+        <div class="alert-stack">
+          ${upcomingOrders.map(orderAlert).join("") || `<div class="mini-empty ok">${svgIcon("i-check-circle")}Nenhuma encomenda próxima do vencimento.</div>`}
+        </div>
+      </section>
     </div>
   `;
   $("#dashboardMonth")?.addEventListener("change", (event) => {
     state.dashboardMonth = event.target.value || null;
     renderDashboard();
   });
+  bindChartHover();
   updateCountdowns();
+}
+
+function capitalize(text = "") {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
+const compactMoney = (value) => `R$ ${Number(value || 0).toLocaleString("pt-BR", { notation: "compact", maximumFractionDigits: 1 })}`;
+
+function pipelineStrip(activeItems, allOrders) {
+  const cadastro = activeItems.filter((i) => i.status === "Em cadastro de preços");
+  const proposta = activeItems.filter((i) => i.status === "Proposta enviada");
+  const ganhos = activeItems.filter((i) => WIN_STATUSES.includes(i.status) && pendingOrderQty(i) > 0);
+  const abertas = allOrders.filter((o) => o.status_encomenda !== "Entregue");
+  const aReceber = allOrders.filter((o) => o.status_encomenda === "Entregue" && !Number(o.pagamento_recebido || 0));
+  const pagas = allOrders.filter((o) => o.status_encomenda === "Entregue" && Number(o.pagamento_recebido || 0));
+  const groups = (rows) => groupOrderRows(rows).length;
+  const stages = [
+    { label: "Em precificação", count: cadastro.length, unit: "itens", value: cadastro.reduce((s, i) => s + itemTotal(i), 0), go: "showView('future')" },
+    { label: "Em proposta", count: proposta.length, unit: "itens", value: proposta.reduce((s, i) => s + itemBusinessTotal(i), 0), go: "showView('proposalItems')" },
+    { label: "Ganhos sem empenho", count: ganhos.length, unit: "itens", value: ganhos.reduce((s, i) => s + pendingOrderQty(i) * itemValue(i), 0), go: "showView('won')" },
+    { label: "Encomendas abertas", count: groups(abertas), unit: "encomendas", value: abertas.reduce((s, i) => s + itemBusinessTotal(i), 0), go: "showView('orders')" },
+    { label: "A receber", count: groups(aReceber), unit: "entregues", value: aReceber.reduce((s, i) => s + itemBusinessTotal(i), 0), go: "goFinished('pending')", tone: aReceber.length ? "warn" : "" },
+    { label: "Pago", count: groups(pagas), unit: "encomendas", value: pagas.reduce((s, i) => s + itemBusinessTotal(i), 0), go: "goFinished('paid')", tone: pagas.length ? "ok" : "" },
+  ];
+  return `
+    <div class="pipeline">
+      ${stages.map((stage, index) => `
+        <button type="button" class="pipeline-step ${stage.tone || ""}" onclick="${stage.go}">
+          <span class="pipeline-index">${index + 1}</span>
+          <span class="pipeline-label">${stage.label}</span>
+          <strong>${money(stage.value)}</strong>
+          <small>${stage.count} ${stage.count === 1 ? ({ itens: "item", encomendas: "encomenda", entregues: "entregue" }[stage.unit] || stage.unit) : stage.unit}</small>
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function goFinished(payment) {
+  const select = $("#finishedPayment");
+  if (select) select.value = payment;
+  showView("finished");
+}
+
+function monthlyChart(activeItems, now, selectedMonth) {
+  const months = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - 11 + index, 1);
+    return { key: monthKey(date), date, value: 0 };
+  });
+  const byKey = new Map(months.map((month) => [month.key, month]));
+  activeItems
+    .filter((item) => WIN_STATUSES.includes(item.status))
+    .forEach((item) => {
+      const bucket = byKey.get(monthKey(item.tender.data_limite || item.tender.created_at));
+      if (bucket) bucket.value += itemBusinessTotal(item);
+    });
+  const max = Math.max(...months.map((month) => month.value), 0);
+  const niceStep = (() => {
+    if (!max) return 1;
+    const raw = max / 3;
+    const power = 10 ** Math.floor(Math.log10(raw));
+    return [1, 2, 2.5, 5, 10].map((f) => f * power).find((step) => step >= raw);
+  })();
+  const top = niceStep * 3;
+  const peak = months.reduce((best, month) => (month.value > best.value ? month : best), months[0]);
+  const total = months.reduce((sum, month) => sum + month.value, 0);
+  const monthShort = (date) => date.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
+  return `
+    <header class="dash-section-head">
+      <div><h3>Valor ganho por mês</h3><p>Últimos 12 meses · ${money(total)} no período · clique em um mês para filtrar o resumo</p></div>
+    </header>
+    <div class="chart" role="img" aria-label="Gráfico de colunas do valor ganho por mês nos últimos 12 meses">
+      <div class="chart-grid">
+        ${[3, 2, 1, 0].map((step) => `<div class="chart-gridline"><span>${max ? compactMoney(niceStep * step) : step === 0 ? "R$ 0" : ""}</span></div>`).join("")}
+      </div>
+      <div class="chart-cols">
+        ${months.map((month) => {
+          const pct = top ? (month.value / top) * 100 : 0;
+          const label = `${capitalize(month.date.toLocaleDateString("pt-BR", { month: "long", year: "numeric" }))}: ${money(month.value)}`;
+          const dim = selectedMonth && selectedMonth !== month.key;
+          return `
+            <button type="button" class="chart-col ${dim ? "dim" : ""} ${selectedMonth === month.key ? "selected" : ""}" data-tip="${escapeAttr(label)}" aria-label="${escapeAttr(label)}" onclick="state.dashboardMonth = '${month.key}' === state.dashboardMonth ? null : '${month.key}'; renderDashboard()">
+              <span class="chart-plot">
+                ${month.value && month === peak ? `<span class="chart-peak" style="bottom:calc(${pct}% + 6px)">${compactMoney(month.value)}</span>` : ""}
+                <span class="chart-bar" style="height:${month.value ? Math.max(pct, 1.5) : 0}%"></span>
+              </span>
+              <span class="chart-x">${monthShort(month.date)}${month.date.getMonth() === 0 || month === months[0] ? `<em>${String(month.date.getFullYear()).slice(2)}</em>` : ""}</span>
+            </button>
+          `;
+        }).join("")}
+      </div>
+    </div>
+    <details class="chart-table">
+      <summary>Ver como tabela</summary>
+      <table>
+        <thead><tr><th>Mês</th><th class="num">Valor ganho</th></tr></thead>
+        <tbody>${months.map((month) => `<tr><td>${capitalize(monthLabel(month.key))}</td><td class="num">${money(month.value)}</td></tr>`).join("")}</tbody>
+      </table>
+    </details>
+  `;
+}
+
+function bindChartHover() {
+  let tip = $("#chartTip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "chartTip";
+    tip.className = "chart-tip";
+    tip.hidden = true;
+    document.body.appendChild(tip);
+  }
+  const show = (col) => {
+    tip.textContent = col.dataset.tip;
+    tip.hidden = false;
+    const bar = $(".chart-bar", col).getBoundingClientRect();
+    const rect = col.getBoundingClientRect();
+    const top = (bar.height ? bar.top : rect.bottom - 30) - tip.offsetHeight - 8;
+    tip.style.left = `${Math.max(8, Math.min(rect.left + rect.width / 2 - tip.offsetWidth / 2, window.innerWidth - tip.offsetWidth - 8))}px`;
+    tip.style.top = `${Math.max(8, top)}px`;
+  };
+  const hide = () => { tip.hidden = true; };
+  $$("#dashboard .chart-col").forEach((col) => {
+    col.addEventListener("mouseenter", () => show(col));
+    col.addEventListener("focus", () => show(col));
+    col.addEventListener("mouseleave", hide);
+    col.addEventListener("blur", hide);
+  });
+}
+
+function agendaRow(t) {
+  const date = isoDate(t.data_limite);
+  const ready = pricesComplete(t);
+  return `
+    <button type="button" class="agenda-row" onclick="openDetail(${t.id})">
+      <span class="agenda-date"><b>${String(date.getDate()).padStart(2, "0")}</b><small>${date.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "")}</small></span>
+      <span class="agenda-info">
+        <strong>Pregão ${escapeHtml(t.pregão)}</strong>
+        <small>${escapeHtml(t.órgão || "")}</small>
+      </span>
+      <span class="agenda-side">
+        <span class="countdown" data-deadline="${t.data_limite}">${countdownLabel(t.data_limite)}</span>
+        <span class="tag ${ready ? "ok" : "warn"}">${ready ? "Preços ok" : "Preços pendentes"}</span>
+      </span>
+    </button>
+  `;
 }
 
 function clearDashboardMonth() {
@@ -490,25 +843,81 @@ function orderAlert(group) {
   `;
 }
 
-function tenderCard(t) {
+function tenderCard(t, { upcoming = false } = {}) {
   const items = selectedTenderItems(t);
   const ready = pricesComplete(t);
   const platform = t.plataforma || "ComprasNet";
+  const date = isoDate(t.data_limite);
+  const hasDate = validDate(date);
   return `
-    <article class="card timeline-card ${ready ? "tender-ready" : ""}">
-      <div class="date-badge"><strong>${brDate(t.data_limite)}</strong><span>${isoDate(t.data_limite)?.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) || "sem horário"}</span></div>
-      <div>
-        <h3>Pregão Eletrônico Nº ${t.pregão}</h3>
-        <p>UASG ${t.uasg} - ${t.órgão}</p>
-        <div class="meta">${statusTag(t.status)}<span class="tag">${platform}</span><span class="tag">${items.length} itens cadastrados</span><span class="tag ${ready ? "ok" : "warn"}">${ready ? "Preços completos" : "Preços pendentes"}</span><span class="tag">${tenderValueLabel(t)}</span><span class="tag">${tenderMinimumLabel(t)}</span><span class="tag">${t.localidade || "Sem localidade"}</span></div>
+    <article class="tender-row ${ready ? "tender-ready" : ""}" role="button" tabindex="0" onclick="openDetail(${t.id})" onkeydown="if(event.key==='Enter' && event.target===this)openDetail(${t.id})">
+      <div class="date-badge ${hasDate ? "" : "no-date"}">
+        ${hasDate ? `
+          <b>${String(date.getDate()).padStart(2, "0")}</b>
+          <small>${date.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "")} ${String(date.getFullYear()).slice(2)}</small>
+          <span>${date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
+        ` : `<small>sem data</small>`}
       </div>
-      <div class="actions">
-        <button onclick="openDetail(${t.id})">Abrir</button>
-        <button onclick="editTender(${t.id})">Editar</button>
-        <button class="danger" onclick="deleteTender(${t.id})">Apagar</button>
+      <div class="tender-main">
+        <div class="tender-title"><h3>Pregão Eletrônico Nº ${escapeHtml(t.pregão)}</h3>${statusTag(t.status)}</div>
+        <p>UASG ${escapeHtml(t.uasg)} · ${escapeHtml(t.órgão || "")}</p>
+        <div class="tender-meta">
+          <span>${escapeHtml(platform)}</span>
+          ${t.localidade ? `<span>${escapeHtml(t.localidade)}</span>` : ""}
+          <span>${items.length} ${items.length === 1 ? "item" : "itens"}</span>
+          <span class="tag ${ready ? "ok" : "warn"}">${ready ? "Preços completos" : "Preços pendentes"}</span>
+          ${upcoming && hasDate && date > new Date() ? `<span class="tender-countdown">${svgIcon("i-calendar")}faltam <b class="countdown" data-deadline="${t.data_limite}">${countdownLabel(t.data_limite)}</b></span>` : ""}
+        </div>
       </div>
+      <div class="tender-values">
+        <small>Valor total</small>
+        <strong>${tenderValueLabel(t)}</strong>
+        <small>Mínimo ${money(t.valor_minimo_total)}</small>
+      </div>
+      <button type="button" class="icon-btn row-menu-btn" title="Mais ações" aria-label="Mais ações" aria-haspopup="menu" onclick="event.stopPropagation(); openTenderMenu(this, ${t.id})">${svgIcon("i-more")}</button>
     </article>
   `;
+}
+
+function openTenderMenu(button, id) {
+  const t = state.tenders.find((candidate) => Number(candidate.id) === Number(id));
+  if (!t) return;
+  openPopover(button, `
+    <div class="menu-title">Pregão ${escapeHtml(t.pregão)}</div>
+    <button type="button" class="menu-item" onclick="openDetail(${id})">${svgIcon("i-external")}Abrir licitação</button>
+    <button type="button" class="menu-item" onclick="editTender(${id})">${svgIcon("i-edit")}Editar dados</button>
+    <div class="menu-sep"></div>
+    <button type="button" class="menu-item danger" onclick="deleteTender(${id})">${svgIcon("i-trash")}Apagar licitação</button>
+  `);
+}
+
+function groupTendersByMonth(rows, options = {}) {
+  if (!rows.length) return "";
+  const groups = [];
+  rows.forEach((t) => {
+    const key = monthKey(t.data_limite) || "none";
+    let group = groups.find((candidate) => candidate.key === key);
+    if (!group) {
+      group = { key, rows: [] };
+      groups.push(group);
+    }
+    group.rows.push(t);
+  });
+  return groups.map((group) => `
+    <div class="timeline-group">
+      <h4 class="timeline-month">${group.key === "none" ? "Sem data definida" : capitalize(monthLabel(group.key))}<span class="tab-count">${group.rows.length}</span></h4>
+      ${group.rows.map((t) => tenderCard(t, options)).join("")}
+    </div>
+  `).join("");
+}
+
+function setResultCount(selector, count, noun = ["licitação", "licitações"]) {
+  const el = $(selector);
+  if (el) el.textContent = `${count} ${count === 1 ? noun[0] : noun[1]}`;
+}
+
+function emptyList(message, hint = "") {
+  return `<div class="tab-empty">${svgIcon("i-search")}<strong>${message}</strong>${hint ? `<p>${hint}</p>` : ""}</div>`;
 }
 
 function renderFuture() {
@@ -523,10 +932,43 @@ function renderFuture() {
     .filter((t) => !platform || (t.plataforma || "ComprasNet") === platform)
     .filter((t) => `${t.pregão} ${t.uasg} ${t.órgão} ${t.plataforma || "ComprasNet"}`.toLowerCase().includes(q))
     .sort((a, b) => (isoDate(a.data_limite) || new Date(8640000000000000)) - (isoDate(b.data_limite) || new Date(8640000000000000)));
-  $("#futureList").innerHTML = rows.map(tenderCard).join("") || `<div class="card">Nenhuma licitação futura encontrada.</div>`;
+  const filtered = Boolean(q || platform);
+  setResultCount("#futureCount", rows.length);
+  if ($("#futureClear")) $("#futureClear").hidden = !filtered;
+  $("#futureList").innerHTML = groupTendersByMonth(rows, { upcoming: true }) || (filtered
+    ? emptyList("Nenhuma licitação encontrada", "Tente outro termo ou limpe os filtros.")
+    : `<div class="tab-empty">${svgIcon("i-calendar")}<strong>Nenhuma licitação futura</strong><p>Cadastre a próxima disputa para acompanhá-la aqui.</p><button type="button" class="primary" onclick="document.getElementById('newTender').click()">${svgIcon("i-plus")}Nova licitação</button></div>`);
+}
+
+function clearFutureFilters() {
+  $("#futureSearch").value = "";
+  $("#futurePlatform").value = "";
+  renderFuture();
+}
+
+function clearPastFilters() {
+  ["#pastSearch", "#pastPlatform", "#pastYear", "#pastMonth", "#pastDate"].forEach((selector) => { $(selector).value = ""; });
+  renderPast();
+}
+
+function syncPastYearOptions() {
+  const select = $("#pastYear");
+  if (!select) return;
+  const now = appNow();
+  const years = [...new Set(state.tenders
+    .map((t) => isoDate(t.data_limite))
+    .filter((d) => validDate(d) && d < now)
+    .map((d) => String(d.getFullYear())))].sort().reverse();
+  const signature = years.join(",");
+  if (select.dataset.years === signature) return;
+  const current = select.value;
+  select.innerHTML = `<option value="">Todos os anos</option>${years.map((year) => `<option value="${year}">${year}</option>`).join("")}`;
+  select.value = years.includes(current) ? current : "";
+  select.dataset.years = signature;
 }
 
 function renderPast() {
+  syncPastYearOptions();
   const q = ($("#pastSearch")?.value || "").toLowerCase();
   const platform = $("#pastPlatform")?.value || "";
   const year = ($("#pastYear")?.value || "").trim();
@@ -546,7 +988,12 @@ function renderPast() {
       return true;
     })
     .sort((a, b) => isoDate(b.data_limite) - isoDate(a.data_limite));
-  $("#pastList").innerHTML = rows.map(tenderCard).join("") || `<div class="card">Nenhuma licitação passada encontrada.</div>`;
+  const filtered = Boolean(q || platform || year || month || exactDate);
+  setResultCount("#pastCount", rows.length);
+  if ($("#pastClear")) $("#pastClear").hidden = !filtered;
+  $("#pastList").innerHTML = groupTendersByMonth(rows) || (filtered
+    ? emptyList("Nenhuma licitação encontrada", "Tente outro termo ou limpe os filtros.")
+    : emptyList("Nenhuma licitação passada ainda"));
 }
 
 function renderWon() {
@@ -770,52 +1217,333 @@ function renderFinished() {
   );
 }
 
+const DOC_TYPES = [
+  ["Edital", "Edital e anexos do pregão"],
+  ["Proposta", "Propostas geradas e enviadas"],
+  ["Empenho", "Notas de empenho recebidas"],
+  ["Ata", "Atas de registro de preços"],
+  ["Contrato", "Contratos assinados"],
+  ["Outro", "Demais documentos"],
+];
+
+function tenderOrderGroups(t) {
+  const groups = groupOrderRows(flattenOrders().filter((order) => Number(order.tender.id) === Number(t.id)));
+  const byDue = (a, b) => (isoDate(a.items[0].prazo_entrega) || new Date(8640000000000000)) - (isoDate(b.items[0].prazo_entrega) || new Date(8640000000000000));
+  return {
+    open: groups.filter((group) => group.items[0].status_encomenda !== "Entregue").sort(byDue),
+    done: groups.filter((group) => group.items[0].status_encomenda === "Entregue").sort(byDue).reverse(),
+  };
+}
+
+function detailStats(t) {
+  const items = t.items || [];
+  const active = items.filter((item) => Number(item.selecionado_cadastro ?? 1) !== 0);
+  const priced = active.filter((item) => (
+    numberValue(item.valor_cadastro) > 0 &&
+    numberValue(item.valor_mínimo) > 0 &&
+    (Number(item.valor_sigiloso || 0) || numberValue(item.valor_unitário) > 0)
+  ));
+  const orders = tenderOrderGroups(t);
+  return { items, active, priced, orders, docs: t.attachments || [] };
+}
+
+function goBackFromDetail() {
+  showView(state.returnView && state.returnView !== "detail" ? state.returnView : "dashboard");
+}
+
+function setDetailTab(tab) {
+  state.detailTab = tab;
+  closePopover();
+  renderDetailBody();
+}
+
 async function openDetail(id) {
+  if (state.view !== "detail") state.returnView = state.view;
   state.current = state.tenders.find((tender) => Number(tender.id) === Number(id)) || await api(`/api/tenders/${id}`);
+  if (Number(state.detailTenderId) !== Number(state.current.id)) {
+    state.detailTab = "items";
+    state.detailTenderId = state.current.id;
+  }
   showView("detail");
   const t = state.current;
+  setCrumb(`Pregão ${t.pregão}`);
+  const stats = detailStats(t);
+  const deadline = isoDate(t.data_limite);
+  const upcoming = validDate(deadline) && deadline > new Date();
+  const pricedPct = stats.active.length ? Math.round((stats.priced.length / stats.active.length) * 100) : 0;
+  const returnLabel = VIEW_LABELS[state.returnView] || "Painel";
   $("#detail").innerHTML = `
-    <div class="detail-top">
-      <div>
-        <h2>Pregão Eletrônico Nº ${t.pregão}</h2>
-        <p>UASG ${t.uasg} - ${t.órgão}</p>
-        <div class="meta">${statusTag(t.status)}<span class="tag">${t.plataforma || "ComprasNet"}</span><span class="tag">${tenderValueLabel(t)}</span><span class="tag">${tenderMinimumLabel(t)}</span><span class="tag">${brDateTime(t.data_limite)}</span></div>
+    <header class="detail-header">
+      <div class="detail-heading">
+        <button type="button" class="icon-btn back-btn" onclick="goBackFromDetail()" title="Voltar para ${escapeAttr(returnLabel)}" aria-label="Voltar">${svgIcon("i-arrow-left")}</button>
+        <div>
+          <div class="detail-eyebrow">${escapeHtml(t.plataforma || "ComprasNet")} · UASG ${escapeHtml(t.uasg)}${t.localidade ? ` · ${escapeHtml(t.localidade)}` : ""}</div>
+          <h2>Pregão Eletrônico Nº ${escapeHtml(t.pregão)}</h2>
+          <p>${escapeHtml(t.órgão || "")}</p>
+        </div>
       </div>
-      <div class="actions">
-        <button onclick="showView('dashboard')">Voltar</button>
-        <button onclick="editTender(${t.id})">Editar licitação</button>
+      <div class="detail-actions">
         <div class="export-actions detail-export" aria-label="Exportar esta licitação">
           <span>Exportar</span>
           <button title="Exportar licitação completa para planilha" onclick="exportTender(this, ${t.id}, 'xlsx')">XLSX</button>
           <button title="Exportar licitação completa para PDF" onclick="exportTender(this, ${t.id}, 'pdf')">PDF</button>
         </div>
-        <button onclick='openUpload(${t.id}, "", "Proposta")'>Propostas</button>
-        <button onclick='openUpload(${t.id}, "", "Edital")'>Edital</button>
-        <button onclick='openUpload(${t.id}, "", "Empenho")'>Empenho</button>
-        <button onclick='openUpload(${t.id}, "", "Ata")'>Ata</button>
-        <button onclick='openUpload(${t.id}, "", "Contrato")'>Contrato</button>
+        <button type="button" onclick="editTender(${t.id})">${svgIcon("i-edit")}Editar licitação</button>
       </div>
-    </div>
-    <div class="proposal-bar">
-      <label><input type="checkbox" id="selectAllItems" checked /> Selecionar itens para proposta</label>
-      <div class="actions">
-        <button onclick="prepareProposal('docx')">Gerar DOCX</button>
-        <button class="primary" onclick="prepareProposal('pdf')">Gerar PDF</button>
+    </header>
+    <section class="detail-kpis">
+      <div class="kpi"><span>Status</span><div>${statusTag(t.status)}</div></div>
+      <div class="kpi">
+        <span>Data limite</span>
+        <strong>${brDateTime(t.data_limite)}</strong>
+        ${upcoming ? `<small>faltam <b class="countdown" data-deadline="${t.data_limite}">${countdownLabel(t.data_limite)}</b></small>` : ""}
       </div>
-    </div>
-    <div class="bulk-bar">
-      <button onclick="addBlankItem()">+ Item avulso</button>
-      <button onclick="addLotItem()">+ Item em lote</button>
-      <span class="tag">Links e status entram apenas na etapa de proposta ou item ganho.</span>
-    </div>
-    <div id="itemsGroups" class="items-groups">
-      ${renderItemGroups(t.items)}
+      <div class="kpi"><span>Valor total</span><strong>${tenderValueLabel(t)}</strong></div>
+      <div class="kpi"><span>Total mínimo</span><strong>${money(t.valor_minimo_total)}</strong></div>
+      <div class="kpi">
+        <span>Preços completos</span>
+        <strong>${stats.priced.length}<em>/${stats.active.length}</em></strong>
+        <div class="progress ${pricedPct === 100 ? "done" : ""}"><i style="width:${pricedPct}%"></i></div>
+      </div>
+    </section>
+    ${t.observação ? `<div class="detail-note">${svgIcon("i-info")}<p>${escapeHtml(t.observação)}</p></div>` : ""}
+    <nav class="detail-tabs" role="tablist">
+      ${[
+        ["items", "Itens", stats.items.length],
+        ["docs", "Documentos", stats.docs.length],
+        ["orders", "Encomendas", stats.orders.open.length + stats.orders.done.length],
+      ].map(([key, label, count]) => `
+        <button type="button" role="tab" data-tab="${key}" class="detail-tab ${state.detailTab === key ? "active" : ""}" aria-selected="${state.detailTab === key}" onclick="setDetailTab('${key}')">
+          ${label}<span class="tab-count">${count}</span>
+        </button>
+      `).join("")}
+    </nav>
+    <div id="detailTabBody" class="detail-tab-body"></div>
+  `;
+  renderDetailBody();
+}
+
+function renderDetailBody() {
+  const t = state.current;
+  const body = $("#detailTabBody");
+  if (!t || !body) return;
+  $$(".detail-tab").forEach((tab) => {
+    const active = tab.dataset.tab === state.detailTab;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
+  if (state.detailTab === "docs") {
+    body.innerHTML = renderDocsTab(t);
+  } else if (state.detailTab === "orders") {
+    body.innerHTML = renderOrdersTab(t);
+  } else {
+    body.innerHTML = `
+      <div class="items-toolbar">
+        <label class="inline-check select-all"><input type="checkbox" id="selectAllItems" /> Selecionar todos</label>
+        <span class="items-toolbar-hint">Marque os itens para gerar a proposta. Links e status entram apenas na etapa de proposta ou item ganho.</span>
+        <div class="actions">
+          <button type="button" onclick="addBlankItem()">${svgIcon("i-plus")}Item avulso</button>
+          <button type="button" onclick="addLotItem()">${svgIcon("i-plus")}Item em lote</button>
+        </div>
+      </div>
+      <div id="itemsGroups" class="items-groups">
+        ${renderItemGroups(t.items)}
+      </div>
+    `;
+    bindLiveTotals();
+  }
+  updateItemSelection();
+}
+
+function renderDocsTab(t) {
+  const docs = t.attachments || [];
+  const itemLabel = (doc) => {
+    if (!doc.item_id) return "";
+    const item = (t.items || []).find((candidate) => Number(candidate.id) === Number(doc.item_id));
+    return item ? `Item ${escapeHtml(item.item || "-")}` : "Item";
+  };
+  return `
+    <div class="docs-grid">
+      ${DOC_TYPES.map(([tipo, description]) => {
+        const files = docs.filter((doc) => (doc.tipo || "Outro") === tipo);
+        return `
+          <article class="doc-card ${files.length ? "has-files" : ""}">
+            <header>
+              <span class="doc-icon">${svgIcon("i-file")}</span>
+              <div>
+                <h3>${tipo === "Proposta" ? "Propostas" : tipo === "Outro" ? "Outros" : `${tipo}s`}</h3>
+                <p>${description}</p>
+              </div>
+              <span class="tab-count">${files.length}</span>
+            </header>
+            <div class="doc-files">
+              ${files.length ? files.map((doc) => `
+                <div class="doc-file">
+                  <a href="/attachments/${doc.id}/download" target="_blank" rel="noopener" title="${escapeAttr(doc.filename)}">${escapeHtml(doc.filename)}</a>
+                  <small>${[itemLabel(doc), brDate(doc.uploaded_at)].filter(Boolean).join(" · ")}</small>
+                  <button type="button" class="icon-btn" title="Apagar arquivo" aria-label="Apagar arquivo" onclick="deleteAttachment(${doc.id})">${svgIcon("i-trash")}</button>
+                </div>
+              `).join("") : `<div class="doc-empty">Nenhum arquivo anexado.</div>`}
+            </div>
+            <footer>
+              <button type="button" onclick='openUpload(${t.id}, "", "${tipo}")'>${svgIcon("i-upload")}Anexar</button>
+            </footer>
+          </article>
+        `;
+      }).join("")}
     </div>
   `;
-  $("#selectAllItems").addEventListener("change", (event) => {
-    $$(".proposal-item").forEach((box) => box.checked = event.target.checked);
+}
+
+function renderOrdersTab(t) {
+  const { open, done } = tenderOrderGroups(t);
+  if (!open.length && !done.length) {
+    return `<div class="tab-empty">${svgIcon("i-package")}<strong>Nenhuma encomenda nesta licitação</strong><p>Quando um item ganho receber empenho, a encomenda aparece aqui.</p></div>`;
+  }
+  return `
+    ${open.length ? `<h3 class="tab-section-title">Em andamento <span class="tab-count">${open.length}</span></h3>
+      <div class="order-board list-mode">${open.map((group) => orderGroupCard(group)).join("")}</div>` : ""}
+    ${done.length ? `<h3 class="tab-section-title">Finalizadas <span class="tab-count">${done.length}</span></h3>
+      <div class="order-board list-mode">${done.map((group) => orderGroupCard(group, true)).join("")}</div>` : ""}
+  `;
+}
+
+function selectedItemBoxes() {
+  return $$("#detail .proposal-item").filter((box) => box.checked && box.value);
+}
+
+function updateItemSelection() {
+  const bar = $("#selectionBar");
+  if (!bar) return;
+  const boxes = $$("#detail .proposal-item").filter((box) => box.value);
+  const checked = boxes.filter((box) => box.checked);
+  const count = checked.length;
+  const total = checked.reduce((sum, box) => {
+    const item = state.current?.items.find((candidate) => Number(candidate.id) === Number(box.value));
+    return sum + (item ? itemTotal(item) : 0);
+  }, 0);
+  bar.hidden = count === 0 || state.detailTab !== "items";
+  $("#detail").classList.toggle("has-selection", !bar.hidden);
+  $("#selectionCount").textContent = count;
+  $("#selectionLabel").textContent = count === 1 ? "item selecionado" : "itens selecionados";
+  $("#selectionTotal").textContent = count ? money(total) : "";
+  $$("#detail .readonly-row").forEach((row) => row.classList.toggle("selected", Boolean($(".proposal-item", row)?.checked)));
+  const all = $("#selectAllItems");
+  if (all) {
+    all.checked = boxes.length > 0 && count === boxes.length;
+    all.indeterminate = count > 0 && count < boxes.length;
+  }
+}
+
+function clearItemSelection() {
+  $$("#detail .proposal-item").forEach((box) => { box.checked = false; });
+  updateItemSelection();
+}
+
+function bindDetailInteractions() {
+  const detail = $("#detail");
+  detail.addEventListener("change", (event) => {
+    if (event.target.id === "selectAllItems") {
+      $$("#detail .proposal-item").filter((box) => box.value).forEach((box) => { box.checked = event.target.checked; });
+      updateItemSelection();
+    } else if (event.target.classList.contains("proposal-item")) {
+      updateItemSelection();
+    }
   });
-  bindLiveTotals();
+  detail.addEventListener("click", (event) => {
+    const row = event.target.closest("tr.readonly-row");
+    if (!row || event.target.closest("button, a, input, label, select")) return;
+    const box = $(".proposal-item", row);
+    if (!box) return;
+    box.checked = !box.checked;
+    updateItemSelection();
+  });
+}
+
+/* ---------- Menus flutuantes (ações da linha, pesquisa) ---------- */
+
+function closePopover() {
+  const pop = $("#popover");
+  if (!pop || pop.hidden) return;
+  pop.hidden = true;
+  pop.innerHTML = "";
+  $$(".popover-open").forEach((el) => el.classList.remove("popover-open"));
+}
+
+function openPopover(anchor, html) {
+  let pop = $("#popover");
+  if (!pop) {
+    pop = document.createElement("div");
+    pop.id = "popover";
+    pop.className = "popover";
+    pop.setAttribute("role", "menu");
+    pop.hidden = true;
+    document.body.appendChild(pop);
+    pop.addEventListener("click", (event) => {
+      if (event.target.closest(".menu-item")) setTimeout(closePopover, 0);
+    });
+  }
+  const wasOpenHere = !pop.hidden && anchor.classList.contains("popover-open");
+  closePopover();
+  if (wasOpenHere) return;
+  pop.innerHTML = html;
+  pop.hidden = false;
+  anchor.classList.add("popover-open");
+  const rect = anchor.getBoundingClientRect();
+  const width = pop.offsetWidth;
+  const height = pop.offsetHeight;
+  let left = rect.left + width <= window.innerWidth - 8 ? rect.left : rect.right - width;
+  left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+  let top = rect.bottom + 6;
+  if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 6);
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+  $(".menu-item", pop)?.focus({ preventScroll: true });
+}
+
+function bindPopoverDismiss() {
+  document.addEventListener("mousedown", (event) => {
+    if (event.target.closest("#popover, .popover-open")) return;
+    closePopover();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closePopover();
+  });
+  window.addEventListener("resize", closePopover);
+  document.addEventListener("scroll", (event) => {
+    if (event.target.closest?.("#popover")) return;
+    closePopover();
+  }, true);
+}
+
+function openItemMenu(button, id) {
+  const item = state.current?.items.find((candidate) => Number(candidate.id) === Number(id));
+  if (!item) return;
+  const inactive = Number(item.selecionado_cadastro ?? 1) === 0;
+  openPopover(button, `
+    <div class="menu-title">Item ${escapeHtml(item.item || "-")} · ${escapeHtml(item.marca || "")} ${escapeHtml(item.modelo || "")}</div>
+    <button type="button" class="menu-item" onclick="editItemInline(${id})">${svgIcon("i-edit")}Editar item</button>
+    <button type="button" class="menu-item" onclick="addAlternative(${id})">${svgIcon("i-plus")}Adicionar alternativa</button>
+    <button type="button" class="menu-item" onclick="editObservation(${id})">${svgIcon("i-info")}${item.observação ? "Editar observação" : "Adicionar observação"}</button>
+    <div class="menu-sep"></div>
+    <button type="button" class="menu-item" onclick="toggleDispute(${id}, ${inactive ? 1 : 0})">${svgIcon(inactive ? "i-check" : "i-x")}${inactive ? "Reativar disputa" : "Não disputar este item"}</button>
+    <button type="button" class="menu-item danger" onclick="deleteItem(${id})">${svgIcon("i-trash")}Apagar item</button>
+  `);
+}
+
+function openSearchMenu(button) {
+  const row = button.closest("tr");
+  const marca = $('input[name="marca"]', row)?.value ?? button.dataset.marca ?? "";
+  const modelo = $('input[name="modelo"]', row)?.value ?? button.dataset.modelo ?? "";
+  const probe = { marca, modelo };
+  if (!`${marca} ${modelo}`.trim()) return toast("Preencha marca e modelo para pesquisar.");
+  const sites = [["ml", "Mercado Livre"], ["amazon", "Amazon"], ["google", "Google"], ["sweetwater", "Sweetwater"], ["bh", "B&H Photo"]];
+  openPopover(button, `
+    <div class="menu-title">Pesquisar “${escapeHtml(`${marca} ${modelo}`.trim())}”</div>
+    ${sites.map(([key, label]) => `
+      <a class="menu-item" href="${searchUrl(key, probe)}" target="_blank" rel="noopener noreferrer">${svgIcon("i-external")}${label}</a>
+    `).join("")}
+  `);
 }
 
 function renderItemGroups(items) {
@@ -836,20 +1564,20 @@ function itemGroup(title, lot, items) {
           <p>${lot ? "Itens vinculados a um mesmo lote da licitação." : "Itens independentes, sem composição de lote."}</p>
           ${lotSummary}
         </div>
-        <button data-lot="${escapeAttr(lot || "")}" onclick="${lot ? "addLotItemFromButton(this)" : "addBlankItem()"}">+ Item</button>
+        <button data-lot="${escapeAttr(lot || "")}" onclick="${lot ? "addLotItemFromButton(this)" : "addBlankItem()"}">${svgIcon("i-plus")}Item</button>
       </header>
       <div class="sheet-wrap">
         <table>
           <thead>
             <tr>
-              <th></th><th>Item</th><th>Produto</th><th>Cadastrar?</th><th class="num">Qtd</th><th class="num">Valor unit.</th><th>Sigiloso</th><th class="num">Total</th><th class="num">Cadastro</th><th class="num">Mínimo</th><th>Pesquisa</th><th></th>
+              <th></th><th>Item</th><th>Produto</th><th>Cadastrar?</th><th class="num">Qtd</th><th class="num">Valor unit.</th><th>Sigiloso</th><th class="num">Total</th><th class="num">Cadastro</th><th class="num">Mínimo</th><th class="actions-head">Ações</th>
             </tr>
           </thead>
           <tbody>${items.map((item) => itemRow(item, lot)).join("")}</tbody>
         </table>
       </div>
       <footer class="item-group-footer">
-        <button data-lot="${escapeAttr(lot || "")}" onclick="${lot ? "addLotItemFromButton(this)" : "addBlankItem()"}">+ Item</button>
+        <button data-lot="${escapeAttr(lot || "")}" onclick="${lot ? "addLotItemFromButton(this)" : "addBlankItem()"}">${svgIcon("i-plus")}Adicionar item</button>
       </footer>
     </section>
   `;
@@ -871,7 +1599,7 @@ function itemRow(i, groupLot = "") {
       <tr class="readonly-row ${inactive ? "item-inactive" : ready ? "item-ready" : ""}" data-id="${i.id}">
         <td><input class="proposal-item row-select" type="checkbox" value="${i.id}" /></td>
         <td><div class="cell-main">${i.item || "-"}</div>${alt ? '<div class="cell-muted">Alternativa</div>' : ""}</td>
-        <td><div class="cell-main">${i.marca || "-"} · ${i.modelo || "-"}</div>${i.observação ? `<button type="button" class="obs-alert" data-observation="${escapeAttr(i.observação)}" onclick="editObservation(${i.id})">Observação</button>` : ""}</td>
+        <td><div class="cell-main">${i.marca || "-"} · ${i.modelo || "-"}</div><div class="cell-tags">${searchButton(i)}${i.status && i.status !== "Em cadastro de preços" ? statusTag(i.status) : ""}${i.observação ? `<button type="button" class="obs-alert" data-observation="${escapeAttr(i.observação)}" onclick="editObservation(${i.id})">Observação</button>` : ""}</div></td>
         <td>${inactive ? '<span class="tag bad">Não disputar</span>' : '<span class="tag ok">Cadastrar</span>'}</td>
         <td class="num">${i.qtd || 0}</td>
         <td class="num">${Number(i.valor_sigiloso || 0) ? "Sigiloso" : money(i.valor_unitário)}</td>
@@ -879,14 +1607,10 @@ function itemRow(i, groupLot = "") {
         <td class="num"><strong>${inactive ? "Não soma" : itemTotalLabel(i)}</strong></td>
         <td class="num">${money(i.valor_cadastro)}</td>
         <td class="num">${money(i.valor_mínimo)}</td>
-        <td>${searchLinks(i)}</td>
         <td class="inline-actions">
-          <button onclick="editItemInline(${i.id})">Editar</button>
-          <button class="primary" onclick="markItemProposal(${i.id})">Item em Proposta</button>
-          <button onclick="addAlternative(${i.id})">Alternativa</button>
-          <button onclick="editObservation(${i.id})">Observação</button>
-          <button class="danger" onclick="toggleDispute(${i.id}, ${inactive ? 1 : 0})">${inactive ? "Reativar" : "X"}</button>
-          <button class="danger" onclick="deleteItem(${i.id})">Apagar</button>
+          <button type="button" class="icon-btn row-edit-btn" title="Editar item" aria-label="Editar item" onclick="editItemInline(${i.id})">${svgIcon("i-edit")}</button>
+          <button type="button" class="primary" title="Enviar este item para Itens em proposta" onclick="markItemProposal(${i.id})">${svgIcon("i-send")}Item em proposta</button>
+          <button type="button" class="icon-btn row-menu-btn" title="Mais ações" aria-label="Mais ações" aria-haspopup="menu" onclick="openItemMenu(this, ${i.id})">${svgIcon("i-more")}</button>
         </td>
       </tr>
     `;
@@ -901,6 +1625,7 @@ function itemRow(i, groupLot = "") {
       <td>
         <input name="marca" required value="${i.marca || ""}" placeholder="Marca" />
         <input name="modelo" required value="${i.modelo || i.referência || ""}" placeholder="Modelo" />
+        <div class="cell-tags">${searchButton(i)}</div>
       </td>
       <td>
         <label class="inline-check"><input name="selecionado_cadastro" type="checkbox" ${Number(i.selecionado_cadastro ?? 1) ? "checked" : ""} /> Cadastrar/disputar</label>
@@ -912,8 +1637,7 @@ function itemRow(i, groupLot = "") {
       <td class="num live-total">${Number(i.valor_sigiloso || 0) ? "Sigiloso" : money(total)}</td>
       <td class="num"><input name="valor_cadastro" value="${i.valor_cadastro || ""}" /></td>
       <td class="num"><input name="valor_mínimo" value="${i.valor_mínimo || ""}" /></td>
-      <td>${searchLinks(i)}</td>
-      <td class="inline-actions"><button onclick="saveItemRow(this)">Salvar</button><button onclick="${i.id ? "cancelEdit()" : "cancelNewItem(this)"}">Cancelar</button><button onclick="editObservation(${i.id || "null"})">Observação</button></td>
+      <td class="inline-actions"><button type="button" class="primary" onclick="saveItemRow(this)">${svgIcon("i-check")}Salvar</button><button type="button" onclick="${i.id ? "cancelEdit()" : "cancelNewItem(this)"}">Cancelar</button><button type="button" class="icon-btn" title="Observação" aria-label="Observação" onclick="editObservation(${i.id || "null"})">${svgIcon("i-info")}</button></td>
     </tr>
   `;
 }
@@ -932,8 +1656,8 @@ function addBlankItem() {
   bindLiveTotals();
 }
 
-function addLotItem(existingLot = "") {
-  const lot = existingLot || prompt("Número/nome do lote:");
+async function addLotItem(existingLot = "") {
+  const lot = existingLot || await promptDialog("Novo lote", "Número ou nome do lote:");
   if (!lot) return;
   const group = findLotBody(lot);
   if (group) {
@@ -993,7 +1717,7 @@ async function toggleDispute(id, active) {
 async function deleteItem(id) {
   const item = state.current.items.find((candidate) => Number(candidate.id) === Number(id));
   if (!item) return;
-  if (!confirm(`Apagar o item ${item.item || ""} - ${item.marca || ""} ${item.modelo || ""}?`)) return;
+  if (!(await confirmAction(`Apagar o item ${item.item || ""} - ${item.marca || ""} ${item.modelo || ""}?`))) return;
   state.deletedItem = { ...item, id: "" };
   await fetch(`/api/items/${id}`, { method: "DELETE" });
   showUndoToast();
@@ -1004,7 +1728,7 @@ async function deleteItem(id) {
 async function deleteTender(id) {
   const tender = state.tenders.find((candidate) => Number(candidate.id) === Number(id));
   if (!tender) return;
-  if (!confirm(`Apagar a licitação ${tender.pregão}? Todos os itens, encomendas e anexos vinculados serão removidos.`)) return;
+  if (!(await confirmAction(`Apagar a licitação ${tender.pregão}? Todos os itens, encomendas e anexos vinculados serão removidos.`))) return;
   await fetch(`/api/tenders/${id}`, { method: "DELETE" });
   if (state.current && Number(state.current.id) === Number(id)) {
     state.current = null;
@@ -1016,19 +1740,19 @@ async function deleteTender(id) {
 async function deleteItemGlobal(id, label = "item") {
   const item = flattenItems().find((candidate) => Number(candidate.id) === Number(id));
   if (!item) return;
-  if ((label === "item ganho" || label === "item em proposta") && !confirm(`Remover este ${label} da etapa atual? O item continuará cadastrado no pregão.`)) return;
+  if ((label === "item ganho" || label === "item em proposta") && !(await confirmAction(`Remover este ${label} da etapa atual? O item continuará cadastrado no pregão.`))) return;
   if (label === "item ganho" || label === "item em proposta") {
     await updateSingleItem(id, { status: "Em cadastro de preços" });
     return;
   }
-  if (!confirm(`Apagar este ${label}: item ${item.item || "-"} - ${item.marca || ""} ${item.modelo || ""}?`)) return;
+  if (!(await confirmAction(`Apagar este ${label}: item ${item.item || "-"} - ${item.marca || ""} ${item.modelo || ""}?`))) return;
   await fetch(`/api/items/${id}`, { method: "DELETE" });
   await load();
 }
 
 async function deleteOrder(orderId) {
   if (!orderId) return;
-  if (!confirm("Apagar esta encomenda? O item ganho continuará cadastrado.")) return;
+  if (!(await confirmAction("Apagar esta encomenda? O item ganho continuará cadastrado."))) return;
   await fetch(`/api/orders/${orderId}`, { method: "DELETE" });
   await load();
 }
@@ -1073,7 +1797,7 @@ async function saveItemRow(button) {
   if (!String(data.modelo || "").trim()) missing.push("Modelo");
   if (numberValue(data.qtd) <= 0) missing.push("Qtd");
   if (!isAlternative && !data.valor_sigiloso && numberValue(data.valor_unitário) <= 0) missing.push("Valor unitário");
-  if (missing.length) return alert(`Preencha os campos obrigatórios: ${missing.join(", ")}.`);
+  if (missing.length) return toast(`Preencha os campos obrigatórios: ${missing.join(", ")}.`);
   const saved = await api("/api/items", { method: "POST", body: JSON.stringify(data) });
   if (data.selecionado_cadastro) {
     const siblings = state.current.items.filter((candidate) => (
@@ -1131,7 +1855,7 @@ function bindLiveTotals() {
 
 async function applyBulk() {
   const ids = $$(".row-select").filter((box) => box.checked && box.value).map((box) => box.value);
-  if (!ids.length) return alert("Selecione pelo menos um item já salvo.");
+  if (!ids.length) return toast("Selecione pelo menos um item já salvo.");
   const payload = { item_ids: ids, status: $("#bulkStatus").value, valor_ganho: $("#bulkWonValue").value };
   await api("/api/items/bulk", {
     method: "POST",
@@ -1150,7 +1874,7 @@ async function updateSingleItem(id, updates) {
 
 async function markItemWon(id) {
   await updateSingleItem(id, { status: "Aguardando Habilitação" });
-  alert("Item enviado para Itens ganhos.");
+  toast("Item enviado para Itens ganhos.", "success");
 }
 
 async function editWonData(id) {
@@ -1178,18 +1902,18 @@ async function submitProposalItem(event) {
   event.preventDefault();
   if (!state.proposalItemId) return;
   const value = $("#proposalItemValue").value.trim();
-  if (numberValue(value) <= 0) return alert("Informe o valor pelo qual o item foi para proposta.");
+  if (numberValue(value) <= 0) return toast("Informe o valor pelo qual o item foi para proposta.");
   await updateSingleItem(state.proposalItemId, {
     status: "Proposta enviada",
     valor_ganho: value,
   });
   state.proposalItemId = null;
   $("#proposalItemDialog").close();
-  alert("Item enviado para Itens em Proposta.");
+  toast("Item enviado para Itens em proposta.", "success");
 }
 
 async function editObservation(id) {
-  if (!id) return alert("Salve o item antes de registrar observação.");
+  if (!id) return toast("Salve o item antes de registrar observação.");
   const item = flattenItems().find((candidate) => Number(candidate.id) === Number(id));
   if (!item) return;
   state.observationItemId = id;
@@ -1325,7 +2049,7 @@ function selectedProposalItems() {
 
 function prepareProposal(format) {
   const items = selectedProposalItems();
-  if (!items.length) return alert("Selecione pelo menos um item salvo para gerar a proposta.");
+  if (!items.length) return toast("Selecione pelo menos um item salvo para gerar a proposta.");
   state.pendingProposalFormat = format;
   $("#proposalLinksFields").innerHTML = items.map((item) => `
     <div class="proposal-link-row" data-id="${item.id}">
@@ -1342,11 +2066,11 @@ function prepareProposal(format) {
 async function generateSelected(format) {
   if (!state.current) return;
   const ids = selectedProposalItems().map((item) => item.id);
-  if (!ids.length) return alert("Selecione pelo menos um item salvo para gerar a proposta.");
+  if (!ids.length) return toast("Selecione pelo menos um item salvo para gerar a proposta.");
   const response = await fetch(`/proposal/${state.current.id}?format=${format}&items=${ids.join(",")}`);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    alert(data.error || "Não foi possível gerar a proposta.");
+    toast(data.error || "Não foi possível gerar a proposta.", "error");
     return;
   }
   const blob = await response.blob();
@@ -1386,7 +2110,7 @@ async function downloadExport(button, url, options = {}) {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   } catch (error) {
-    alert(error.message);
+    toast(error.message, "error");
   } finally {
     button.disabled = false;
     button.textContent = original;
@@ -1395,7 +2119,7 @@ async function downloadExport(button, url, options = {}) {
 
 function exportCurrentSector(button, sector, format) {
   const ids = state.exportIds[sector] || [];
-  if (!ids.length) return alert("Não há registros no filtro atual para exportar.");
+  if (!ids.length) return toast("Não há registros no filtro atual para exportar.");
   return downloadExport(button, `/export/sector/${sector}?format=${format}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1408,10 +2132,20 @@ function exportTender(button, tenderId, format) {
 }
 
 function showView(view) {
+  const changed = state.view !== view;
   state.view = view;
   $$(".view").forEach((el) => el.classList.add("hidden"));
   $(`#${view}`).classList.remove("hidden");
-  $$(".nav").forEach((btn) => btn.classList.toggle("active", btn.dataset.view === view));
+  $$(".nav[data-view]").forEach((btn) => btn.classList.toggle("active", btn.dataset.view === view));
+  setCrumb(VIEW_LABELS[view] || "");
+  setSidebarOpen(false);
+  closePopover();
+  if (view !== "detail") {
+    const bar = $("#selectionBar");
+    if (bar) bar.hidden = true;
+    $("#detail")?.classList.remove("has-selection");
+  }
+  if (changed) window.scrollTo({ top: 0 });
   if (view === "users") loadUsers();
   renderView(view);
 }
@@ -1449,7 +2183,7 @@ function openBulkOrder() {
   if (!ids.length) return;
   const items = flattenItems().filter((item) => ids.includes(Number(item.id)));
   if (new Set(items.map((item) => Number(item.tender.id))).size > 1) {
-    alert("Selecione apenas produtos do mesmo pregão para criar uma encomenda agrupada.");
+    toast("Selecione apenas produtos do mesmo pregão para criar uma encomenda agrupada.");
     return;
   }
   state.orderItemIds = ids;
@@ -1478,7 +2212,7 @@ function eligibleCaronaItems() {
 
 function openCaronaDialog() {
   const items = eligibleCaronaItems();
-  if (!items.length) return alert("Nenhum item ganho com valor disponível para cadastrar uma Carona.");
+  if (!items.length) return toast("Nenhum item ganho com valor disponível para cadastrar uma Carona.");
   state.caronaItemIds = [];
   $("#caronaForm").reset();
   $("#caronaProductSearch").value = "";
@@ -1563,7 +2297,7 @@ function renderCaronaItems() {
 async function saveCarona(event) {
   event.preventDefault();
   const itemInputs = $$("#caronaItemsFields [data-carona-item]");
-  if (!itemInputs.length) return alert("Adicione pelo menos um produto à Carona.");
+  if (!itemInputs.length) return toast("Adicione pelo menos um produto à Carona.");
   const data = formData(event.target);
   data.origem = "Carona";
   data.status = "Pendente";
@@ -1643,11 +2377,17 @@ async function renderUploadExisting() {
 }
 
 async function deleteAttachment(id) {
-  if (!confirm("Apagar este arquivo?")) return;
+  if (!(await confirmAction("Apagar este arquivo?"))) return;
   await fetch(`/api/attachments/${id}`, { method: "DELETE" });
   await load();
   await renderUploadExisting();
   if (state.current) state.current = await api(`/api/tenders/${state.current.id}`);
+  await refreshDetailDocs();
+  toast("Arquivo apagado.", "success");
+}
+
+async function refreshDetailDocs() {
+  if (state.view === "detail" && state.current && state.detailTab === "docs") await openDetail(state.current.id);
 }
 
 async function openUsers() {
@@ -1703,21 +2443,21 @@ async function saveUser(event) {
   const form = event.target;
   const data = formData(form);
   data.ativo = form.elements.ativo.checked ? 1 : 0;
-  if (!data.id && !data.senha) return alert("Informe uma senha inicial para o novo usuário.");
+  if (!data.id && !data.senha) return toast("Informe uma senha inicial para o novo usuário.");
   try {
     await api("/api/users", { method: "POST", body: JSON.stringify(data) });
     clearUserForm();
     await loadUsers();
-    alert(data.id ? "Usuário atualizado com sucesso." : "Usuário criado com sucesso.");
+    toast(data.id ? "Usuário atualizado com sucesso." : "Usuário criado com sucesso.", "success");
   } catch (error) {
-    alert(error.message);
+    toast(error.message, "error");
   }
 }
 
 async function deleteUser(id) {
   const user = state.users.find((candidate) => Number(candidate.id) === Number(id));
   if (!user) return;
-  if (!confirm(`Apagar o usuário ${user.nome}?`)) return;
+  if (!(await confirmAction(`Apagar o usuário ${user.nome}?`))) return;
   await fetch(`/api/users/${id}`, { method: "DELETE" });
   await loadUsers();
 }
@@ -1752,6 +2492,8 @@ async function uploadFile(event) {
   await load();
   await renderUploadExisting();
   if (state.current) state.current = await api(`/api/tenders/${state.current.id}`);
+  await refreshDetailDocs();
+  toast(`Arquivo “${file.name}” anexado.`, "success");
 }
 
 async function submitProposalLinks(event) {
@@ -1762,8 +2504,8 @@ async function submitProposalLinks(event) {
     const item = state.current.items.find((candidate) => Number(candidate.id) === id);
     const link = $('input[name="link"]', row).value.trim();
     const valorGanho = $('input[name="valor_ganho"]', row).value.trim();
-    if (!link) return alert("Informe o link do fornecedor para todos os itens selecionados.");
-    if (!valorGanho) return alert("Informe o valor ganho para todos os itens selecionados.");
+    if (!link) return toast("Informe o link do fornecedor para todos os itens selecionados.");
+    if (!valorGanho) return toast("Informe o valor ganho para todos os itens selecionados.");
     await api("/api/items", { method: "POST", body: JSON.stringify({ ...item, link_referência: link, valor_ganho: valorGanho }) });
   }
   $("#proposalLinksDialog").close();
@@ -1782,6 +2524,7 @@ function renderAll() {
   renderFinished();
   renderUsers();
   renderViewToggles();
+  updateNavBadges();
 }
 
 function logout() {
@@ -1811,7 +2554,7 @@ async function submitLogin(event) {
     document.body.classList.remove("login-active");
     await load();
   } catch (error) {
-    alert(error.message);
+    toast(error.message, "error");
   } finally {
     button.disabled = false;
     button.textContent = "Entrar";
@@ -1835,12 +2578,21 @@ async function load() {
     state.current = state.tenders.find((tender) => Number(tender.id) === Number(currentId)) || null;
   }
   renderAll();
+  if (state.view === "detail" && state.current && state.detailTab === "orders") await openDetail(state.current.id);
 }
 
 async function boot() {
   const savedTheme = localStorage.getItem("licitaum-theme");
   if (savedTheme === "dark") document.body.classList.add("dark");
+  if (savedTheme === "light") document.body.classList.remove("dark");
   updateThemeButton();
+  bindShell();
+  bindDetailInteractions();
+  bindPopoverDismiss();
+  if (document.body.classList.contains("sidebar-collapsed") && $("#sidebarToggle")) {
+    $("#sidebarToggle").title = "Expandir menu";
+    $("#sidebarToggle .nav-text").textContent = "Expandir menu";
+  }
   $("#loginForm").addEventListener("submit", submitLogin);
   const savedSession = localStorage.getItem("licitaum-session");
   if (savedSession) {
@@ -1948,12 +2700,12 @@ async function boot() {
   if (state.account) await load();
 }
 
-boot().catch((error) => alert(error.message));
+boot().catch((error) => toast(error.message, "error"));
 
 function updateThemeButton() {
   const button = $("#themeToggle");
   if (!button) return;
   const dark = document.body.classList.contains("dark");
-  button.querySelector(".nav-icon").textContent = dark ? "☼" : "☾";
-  button.querySelector(".nav-text").textContent = dark ? "Modo claro" : "Modo escuro";
+  button.title = dark ? "Usar tema claro" : "Usar tema escuro";
+  button.setAttribute("aria-label", button.title);
 }
